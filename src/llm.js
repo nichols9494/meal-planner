@@ -3,10 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 const OLLAMA_URL = "http://127.0.0.1:11434/api/generate";
 const DEFAULT_OLLAMA_MODEL = "llama3.2";
 
-async function askOllama(
-  prompt,
-  { model = DEFAULT_OLLAMA_MODEL, timeoutMs = 3000 } = {},
-) {
+async function askOllama(prompt, { model = DEFAULT_OLLAMA_MODEL, timeoutMs = 3000 } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -24,8 +21,8 @@ async function askOllama(
   }
 }
 
-async function askClaude(prompt) {
-  return await invoke("ask_claude", { prompt });
+async function askGemini(prompt) {
+  return await invoke("ask_gemini", { prompt });
 }
 
 export async function saveApiKey(key) {
@@ -38,13 +35,13 @@ export async function clearApiKey() {
   return await invoke("clear_api_key");
 }
 
-// mode: "auto" (try local, fall back to cloud), "local" (Ollama only), "cloud" (Claude only)
+// mode: "auto" (try local, fall back to cloud), "local" (Ollama only), "cloud" (Gemini only)
 export async function askLLM(prompt, { mode = "auto" } = {}) {
-  if (mode === "cloud") return askClaude(prompt);
+  if (mode === "cloud") return askGemini(prompt);
   if (mode === "local") return askOllama(prompt);
   try {
     return await askOllama(prompt);
   } catch {
-    return await askClaude(prompt);
+    return await askGemini(prompt);
   }
 }

@@ -4,7 +4,7 @@ use tauri::Manager;
 fn key_file_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    Ok(dir.join("anthropic_key.txt"))
+    Ok(dir.join("gemini_api_key.txt"))
 }
 
 #[tauri::command]
@@ -31,105 +31,117 @@ fn clear_api_key(app: tauri::AppHandle) -> Result<(), String> {
 }
 
 #[derive(serde::Serialize)]
-struct ClaudeMessage {
-    role: String,
-    content: String,
+struct GeminiPart {
+    text: String,
 }
 
 #[derive(serde::Serialize)]
-struct ClaudeRequest {
-    model: String,
-    max_tokens: u32,
-    messages: Vec<ClaudeMessage>,
+struct GeminiContent {
+    parts: Vec<GeminiPart>,
+}
+
+#[derive(serde::Serialize)]
+struct GeminiRequest {
+    contents: Vec<GeminiContent>,
 }
 
 #[derive(serde::Deserialize, Default)]
-struct ClaudeContentBlock {
+struct GeminiResponsePart {
     #[serde(default)]
     text: String,
 }
 
+#[derive(serde::Deserialize, Default)]
+struct GeminiResponseContent {
+    #[serde(default)]
+    parts: Vec<GeminiResponsePart>,
+}
+
+#[derive(serde::Deserialize, Default)]
+struct GeminiCandidate {
+    #[serde(default)]
+    content: GeminiResponseContent,
+}
+
 #[derive(serde::Deserialize)]
-struct ClaudeError {
+struct GeminiError {
     message: String,
 }
 
 #[derive(serde::Deserialize, Default)]
-struct ClaudeResponse {
+struct GeminiResponse {
     #[serde(default)]
-    content: Vec<ClaudeContentBlock>,
+    candidates: Vec<GeminiCandidate>,
     #[serde(default)]
-    error: Option<ClaudeError>,
+    error: Option<GeminiError>,
 }
 
 #[tauri::command]
-async fn ask_claude(app: tauri::AppHandle, prompt: String) -> Result<String, String> {
+async fn ask_gemini(app: tauri::AppHandle, prompt: String) -> Result<String, String> {
     let path = key_file_path(&app)?;
     let key = fs::read_to_string(&path)
-        .map_err(|_| "No Anthropic API key saved yet. Add one in Settings.".to_string())?;
+        .map_err(|_| "No Gemini API key saved yet. Add one in Settings.".to_string())?;
     let key = key.trim().to_string();
     if key.is_empty() {
-        return Err("No Anthropic API key saved yet. Add one in Settings.".to_string());
+        return Err("No Gemini API key saved yet. Add one in Settings.".to_string());
     }
 
     let client = reqwest::Client::new();
-    let body = ClaudeRequest {
-        model: "claude-haiku-4-5-20251001".to_string(),
-        max_tokens: 1024,
-        messages: vec![ClaudeMessage {
-            role: "user".to_string(),
-            content: prompt,
+    let body = GeminiRequest {
+        contents: vec![GeminiContent {
+            parts: vec![GeminiPart { text: prompt }],
         }],
     };
 
+    let url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
+
     let res = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", key)
-        .header("anthropic-version", "2023-06-01")
+        .post(url)
+        .header("x-goog-api-key", key)
         .header("content-type", "application/json")
         .json(&body)
         .send()
         .await
-        .map_err(|e| format!("Network error reaching Claude: {e}"))?;
+        .map_err(|e| format!("Network error reaching Gemini: {e}"))?;
 
     let status = res.status();
-    let parsed: ClaudeResponse = res.json().await.unwrap_or_default();
+    let parsed: GeminiResponse = res.json().await.unwrap_or_default();
 
     if let Some(err) = parsed.error {
-        return Err(format!("Claude API error: {}", err.message));
+        return Err(format!("Gemini API error: {}", err.message));
     }
     if !status.is_success() {
-        return Err(format!("Claude API returned status {status}"));
+        return Err(format!("Gemini API returned status {status}"));
     }
 
     let text = parsed
-        .content
+        .candidates
         .into_iter()
-        .map(|c| c.text)
-        .collect::<Vec<_>>()
-        .join("");
+        .next()
+        .map(|c| c.content.parts.into_iter().map(|p| p.text).collect::<Vec<_>>().join(""))
+        .unwrap_or_default();
+
+    if text.is_empty() {
+        return Err("Gemini returned an empty response (it may have been blocked by its safety filters — try rephrasing).".to_string());
+    }
+
     Ok(text)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
-            Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            save_api_key,
-            has_api_key,
-            clear_api_key,
-            ask_claude
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+  tauri::Builder::default()
+    .setup(|app| {
+      if cfg!(debug_assertions) {
+        app.handle().plugin(
+          tauri_plugin_log::Builder::default()
+            .level(log::LevelFilter::Info)
+            .build(),
+        )?;
+      }
+      Ok(())
+    })
+    .invoke_handler(tauri::generate_handler![save_api_key, has_api_key, clear_api_key, ask_gemini])
+    .run(tauri::generate_context!())
+    .expect("error while running tauri application");
 }

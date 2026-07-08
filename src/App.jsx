@@ -11,9 +11,13 @@ import {
   Sparkles,
   Utensils,
   Loader2,
+  Settings,
+  KeyRound,
+  MessageCircle,
+  Star,
 } from "lucide-react";
 import { storage } from "./storage";
-import { askLLM, saveApiKey } from "./llm";
+import { askLLM, saveApiKey, hasApiKey, clearApiKey } from "./llm";
 
 // ---------- static data ----------
 
@@ -25,14 +29,7 @@ const CATEGORY_META = {
   pantry: { label: "Pantry", emoji: "🥫" },
   other: { label: "Other", emoji: "🧂" },
 };
-const CATEGORY_ORDER = [
-  "produce",
-  "protein",
-  "dairy",
-  "grains",
-  "pantry",
-  "other",
-];
+const CATEGORY_ORDER = ["produce", "protein", "dairy", "grains", "pantry", "other"];
 
 const MEAL_TYPE_META = {
   breakfast: { label: "Breakfast", color: "var(--sun-mid)" },
@@ -41,822 +38,7 @@ const MEAL_TYPE_META = {
   snack: { label: "Snack", color: "var(--violet)" },
 };
 
-const EMOJI_CHOICES = [
-  "🍽️",
-  "🍲",
-  "🥗",
-  "🌮",
-  "🍕",
-  "🍳",
-  "🥪",
-  "🍜",
-  "🍔",
-  "🍛",
-  "🐟",
-  "🍚",
-  "🥞",
-  "🥣",
-  "🌯",
-];
-
-// price fields below are rough estimated U.S. grocery averages for the
-// listed quantity — meant as a ballpark for the shopping list, not a quote.
-const MEAL_LIBRARY = [
-  {
-    id: "sm-pancakes",
-    name: "Pancakes",
-    emoji: "🥞",
-    mealType: "breakfast",
-    baseServings: 4,
-    ingredients: [
-      { name: "Flour", amount: 2, unit: "cup", category: "grains", price: 0.2 },
-      { name: "Milk", amount: 1.5, unit: "cup", category: "dairy", price: 0.4 },
-      { name: "Eggs", amount: 2, unit: "", category: "protein", price: 0.7 },
-      {
-        name: "Butter",
-        amount: 3,
-        unit: "tbsp",
-        category: "dairy",
-        price: 0.45,
-      },
-      {
-        name: "Baking powder",
-        amount: 1,
-        unit: "tbsp",
-        category: "pantry",
-        price: 0.15,
-      },
-      {
-        name: "Maple syrup",
-        amount: 0.5,
-        unit: "cup",
-        category: "pantry",
-        price: 1.75,
-      },
-    ],
-  },
-  {
-    id: "sm-omelette",
-    name: "Veggie Omelette",
-    emoji: "🍳",
-    mealType: "breakfast",
-    baseServings: 4,
-    ingredients: [
-      { name: "Eggs", amount: 3, unit: "", category: "protein", price: 1.05 },
-      {
-        name: "Bell pepper",
-        amount: 1,
-        unit: "",
-        category: "produce",
-        price: 1.0,
-      },
-      {
-        name: "Spinach",
-        amount: 1,
-        unit: "cup",
-        category: "produce",
-        price: 0.6,
-      },
-      { name: "Onion", amount: 0.5, unit: "", category: "produce", price: 0.3 },
-      {
-        name: "Cheddar cheese",
-        amount: 0.5,
-        unit: "cup",
-        category: "dairy",
-        price: 0.5,
-      },
-    ],
-  },
-  {
-    id: "sm-oats",
-    name: "Overnight Oats",
-    emoji: "🥣",
-    mealType: "breakfast",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Rolled oats",
-        amount: 1,
-        unit: "cup",
-        category: "grains",
-        price: 0.35,
-      },
-      { name: "Milk", amount: 1, unit: "cup", category: "dairy", price: 0.25 },
-      {
-        name: "Chia seeds",
-        amount: 1,
-        unit: "tbsp",
-        category: "pantry",
-        price: 0.6,
-      },
-      {
-        name: "Honey",
-        amount: 1,
-        unit: "tbsp",
-        category: "pantry",
-        price: 0.45,
-      },
-      {
-        name: "Blueberries",
-        amount: 0.5,
-        unit: "cup",
-        category: "produce",
-        price: 1.5,
-      },
-    ],
-  },
-  {
-    id: "sm-avotoast",
-    name: "Avocado Toast",
-    emoji: "🥑",
-    mealType: "breakfast",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Bread",
-        amount: 2,
-        unit: "slices",
-        category: "grains",
-        price: 0.7,
-      },
-      {
-        name: "Avocado",
-        amount: 1,
-        unit: "",
-        category: "produce",
-        price: 1.25,
-      },
-      { name: "Lemon", amount: 0.5, unit: "", category: "produce", price: 0.3 },
-      { name: "Eggs", amount: 2, unit: "", category: "protein", price: 0.7 },
-      {
-        name: "Red pepper flakes",
-        amount: 1,
-        unit: "tsp",
-        category: "other",
-        price: 0.1,
-      },
-    ],
-  },
-  {
-    id: "sm-caesar",
-    name: "Caesar Salad",
-    emoji: "🥗",
-    mealType: "lunch",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Romaine lettuce",
-        amount: 1,
-        unit: "head",
-        category: "produce",
-        price: 2.0,
-      },
-      {
-        name: "Parmesan cheese",
-        amount: 0.5,
-        unit: "cup",
-        category: "dairy",
-        price: 0.75,
-      },
-      {
-        name: "Croutons",
-        amount: 1,
-        unit: "cup",
-        category: "grains",
-        price: 1.2,
-      },
-      {
-        name: "Caesar dressing",
-        amount: 0.5,
-        unit: "cup",
-        category: "pantry",
-        price: 1.0,
-      },
-      {
-        name: "Chicken breast",
-        amount: 1,
-        unit: "",
-        category: "protein",
-        price: 2.0,
-      },
-    ],
-  },
-  {
-    id: "sm-club",
-    name: "Turkey Club Sandwich",
-    emoji: "🥪",
-    mealType: "lunch",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Bread",
-        amount: 3,
-        unit: "slices",
-        category: "grains",
-        price: 1.05,
-      },
-      {
-        name: "Turkey breast",
-        amount: 4,
-        unit: "oz",
-        category: "protein",
-        price: 1.5,
-      },
-      {
-        name: "Bacon",
-        amount: 2,
-        unit: "slices",
-        category: "protein",
-        price: 1.0,
-      },
-      {
-        name: "Lettuce",
-        amount: 2,
-        unit: "leaves",
-        category: "produce",
-        price: 0.3,
-      },
-      { name: "Tomato", amount: 1, unit: "", category: "produce", price: 0.7 },
-      {
-        name: "Mayonnaise",
-        amount: 2,
-        unit: "tbsp",
-        category: "pantry",
-        price: 0.4,
-      },
-    ],
-  },
-  {
-    id: "sm-greek",
-    name: "Greek Salad",
-    emoji: "🥗",
-    mealType: "lunch",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Cucumber",
-        amount: 1,
-        unit: "",
-        category: "produce",
-        price: 0.9,
-      },
-      { name: "Tomato", amount: 2, unit: "", category: "produce", price: 1.4 },
-      {
-        name: "Red onion",
-        amount: 0.5,
-        unit: "",
-        category: "produce",
-        price: 0.3,
-      },
-      {
-        name: "Feta cheese",
-        amount: 0.5,
-        unit: "cup",
-        category: "dairy",
-        price: 1.0,
-      },
-      {
-        name: "Kalamata olives",
-        amount: 0.25,
-        unit: "cup",
-        category: "pantry",
-        price: 0.65,
-      },
-      {
-        name: "Olive oil",
-        amount: 2,
-        unit: "tbsp",
-        category: "pantry",
-        price: 0.7,
-      },
-    ],
-  },
-  {
-    id: "sm-burritobowl",
-    name: "Chicken Burrito Bowl",
-    emoji: "🌯",
-    mealType: "lunch",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Chicken breast",
-        amount: 1,
-        unit: "lb",
-        category: "protein",
-        price: 4.0,
-      },
-      { name: "Rice", amount: 1, unit: "cup", category: "grains", price: 0.3 },
-      {
-        name: "Black beans",
-        amount: 1,
-        unit: "can",
-        category: "pantry",
-        price: 1.2,
-      },
-      {
-        name: "Corn",
-        amount: 0.5,
-        unit: "cup",
-        category: "produce",
-        price: 0.4,
-      },
-      {
-        name: "Salsa",
-        amount: 0.5,
-        unit: "cup",
-        category: "pantry",
-        price: 1.5,
-      },
-      {
-        name: "Avocado",
-        amount: 1,
-        unit: "",
-        category: "produce",
-        price: 1.25,
-      },
-    ],
-  },
-  {
-    id: "sm-bolognese",
-    name: "Spaghetti Bolognese",
-    emoji: "🍝",
-    mealType: "dinner",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Ground beef",
-        amount: 1,
-        unit: "lb",
-        category: "protein",
-        price: 6.0,
-      },
-      {
-        name: "Spaghetti",
-        amount: 1,
-        unit: "box",
-        category: "grains",
-        price: 1.8,
-      },
-      {
-        name: "Canned tomatoes",
-        amount: 2,
-        unit: "can",
-        category: "pantry",
-        price: 3.0,
-      },
-      { name: "Onion", amount: 1, unit: "", category: "produce", price: 0.6 },
-      {
-        name: "Garlic",
-        amount: 3,
-        unit: "cloves",
-        category: "produce",
-        price: 0.6,
-      },
-      {
-        name: "Parmesan cheese",
-        amount: 0.5,
-        unit: "cup",
-        category: "dairy",
-        price: 0.75,
-      },
-    ],
-  },
-  {
-    id: "sm-stirfry",
-    name: "Chicken Stir Fry",
-    emoji: "🥡",
-    mealType: "dinner",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Chicken breast",
-        amount: 1,
-        unit: "lb",
-        category: "protein",
-        price: 4.0,
-      },
-      {
-        name: "Broccoli",
-        amount: 2,
-        unit: "cup",
-        category: "produce",
-        price: 2.4,
-      },
-      {
-        name: "Bell pepper",
-        amount: 1,
-        unit: "",
-        category: "produce",
-        price: 1.0,
-      },
-      {
-        name: "Soy sauce",
-        amount: 3,
-        unit: "tbsp",
-        category: "pantry",
-        price: 0.45,
-      },
-      {
-        name: "Garlic",
-        amount: 2,
-        unit: "cloves",
-        category: "produce",
-        price: 0.4,
-      },
-      { name: "Rice", amount: 1, unit: "cup", category: "grains", price: 0.3 },
-    ],
-  },
-  {
-    id: "sm-tacos",
-    name: "Tacos",
-    emoji: "🌮",
-    mealType: "dinner",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Ground beef",
-        amount: 1,
-        unit: "lb",
-        category: "protein",
-        price: 6.0,
-      },
-      {
-        name: "Taco shells",
-        amount: 8,
-        unit: "",
-        category: "grains",
-        price: 2.4,
-      },
-      {
-        name: "Cheddar cheese",
-        amount: 1,
-        unit: "cup",
-        category: "dairy",
-        price: 1.0,
-      },
-      {
-        name: "Lettuce",
-        amount: 1,
-        unit: "cup",
-        category: "produce",
-        price: 1.0,
-      },
-      { name: "Tomato", amount: 1, unit: "", category: "produce", price: 0.7 },
-      {
-        name: "Sour cream",
-        amount: 0.5,
-        unit: "cup",
-        category: "dairy",
-        price: 0.8,
-      },
-    ],
-  },
-  {
-    id: "sm-salmon",
-    name: "Grilled Salmon",
-    emoji: "🐟",
-    mealType: "dinner",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Salmon fillet",
-        amount: 4,
-        unit: "",
-        category: "protein",
-        price: 20.0,
-      },
-      { name: "Lemon", amount: 1, unit: "", category: "produce", price: 0.6 },
-      {
-        name: "Asparagus",
-        amount: 1,
-        unit: "bunch",
-        category: "produce",
-        price: 2.5,
-      },
-      {
-        name: "Olive oil",
-        amount: 2,
-        unit: "tbsp",
-        category: "pantry",
-        price: 0.7,
-      },
-      {
-        name: "Garlic",
-        amount: 2,
-        unit: "cloves",
-        category: "produce",
-        price: 0.4,
-      },
-    ],
-  },
-  {
-    id: "sm-chili",
-    name: "Chili",
-    emoji: "🌶️",
-    mealType: "dinner",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Ground beef",
-        amount: 1,
-        unit: "lb",
-        category: "protein",
-        price: 6.0,
-      },
-      {
-        name: "Kidney beans",
-        amount: 2,
-        unit: "can",
-        category: "pantry",
-        price: 2.4,
-      },
-      {
-        name: "Canned tomatoes",
-        amount: 2,
-        unit: "can",
-        category: "pantry",
-        price: 3.0,
-      },
-      { name: "Onion", amount: 1, unit: "", category: "produce", price: 0.6 },
-      {
-        name: "Bell pepper",
-        amount: 1,
-        unit: "",
-        category: "produce",
-        price: 1.0,
-      },
-      {
-        name: "Chili powder",
-        amount: 2,
-        unit: "tbsp",
-        category: "other",
-        price: 0.4,
-      },
-    ],
-  },
-  {
-    id: "sm-curry",
-    name: "Chicken Curry",
-    emoji: "🍛",
-    mealType: "dinner",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Chicken breast",
-        amount: 1,
-        unit: "lb",
-        category: "protein",
-        price: 4.0,
-      },
-      {
-        name: "Coconut milk",
-        amount: 1,
-        unit: "can",
-        category: "pantry",
-        price: 2.0,
-      },
-      {
-        name: "Curry powder",
-        amount: 2,
-        unit: "tbsp",
-        category: "other",
-        price: 0.5,
-      },
-      { name: "Onion", amount: 1, unit: "", category: "produce", price: 0.6 },
-      {
-        name: "Garlic",
-        amount: 3,
-        unit: "cloves",
-        category: "produce",
-        price: 0.6,
-      },
-      { name: "Rice", amount: 1, unit: "cup", category: "grains", price: 0.3 },
-    ],
-  },
-  {
-    id: "sm-pizza",
-    name: "Margherita Pizza",
-    emoji: "🍕",
-    mealType: "dinner",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Pizza dough",
-        amount: 1,
-        unit: "",
-        category: "grains",
-        price: 3.0,
-      },
-      {
-        name: "Mozzarella cheese",
-        amount: 1,
-        unit: "cup",
-        category: "dairy",
-        price: 1.2,
-      },
-      {
-        name: "Tomato sauce",
-        amount: 0.5,
-        unit: "cup",
-        category: "pantry",
-        price: 1.0,
-      },
-      {
-        name: "Basil leaves",
-        amount: 10,
-        unit: "leaves",
-        category: "produce",
-        price: 0.5,
-      },
-      {
-        name: "Olive oil",
-        amount: 1,
-        unit: "tbsp",
-        category: "pantry",
-        price: 0.35,
-      },
-    ],
-  },
-  {
-    id: "sm-vegsoup",
-    name: "Vegetable Soup",
-    emoji: "🍲",
-    mealType: "dinner",
-    baseServings: 4,
-    ingredients: [
-      { name: "Carrots", amount: 3, unit: "", category: "produce", price: 0.9 },
-      {
-        name: "Celery",
-        amount: 3,
-        unit: "stalks",
-        category: "produce",
-        price: 1.2,
-      },
-      { name: "Onion", amount: 1, unit: "", category: "produce", price: 0.6 },
-      {
-        name: "Potatoes",
-        amount: 2,
-        unit: "",
-        category: "produce",
-        price: 1.0,
-      },
-      {
-        name: "Vegetable broth",
-        amount: 4,
-        unit: "cup",
-        category: "pantry",
-        price: 2.4,
-      },
-      { name: "Thyme", amount: 1, unit: "tsp", category: "other", price: 0.15 },
-    ],
-  },
-  {
-    id: "sm-bbqchicken",
-    name: "BBQ Chicken",
-    emoji: "🍗",
-    mealType: "dinner",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Chicken thighs",
-        amount: 6,
-        unit: "",
-        category: "protein",
-        price: 7.2,
-      },
-      {
-        name: "BBQ sauce",
-        amount: 1,
-        unit: "cup",
-        category: "pantry",
-        price: 2.5,
-      },
-      {
-        name: "Corn on the cob",
-        amount: 4,
-        unit: "",
-        category: "produce",
-        price: 2.8,
-      },
-      {
-        name: "Coleslaw mix",
-        amount: 4,
-        unit: "cup",
-        category: "produce",
-        price: 4.0,
-      },
-    ],
-  },
-  {
-    id: "sm-friedrice",
-    name: "Fried Rice",
-    emoji: "🍚",
-    mealType: "dinner",
-    baseServings: 4,
-    ingredients: [
-      { name: "Rice", amount: 3, unit: "cup", category: "grains", price: 0.9 },
-      { name: "Eggs", amount: 2, unit: "", category: "protein", price: 0.7 },
-      {
-        name: "Frozen peas & carrots",
-        amount: 1,
-        unit: "cup",
-        category: "produce",
-        price: 1.0,
-      },
-      {
-        name: "Soy sauce",
-        amount: 3,
-        unit: "tbsp",
-        category: "pantry",
-        price: 0.45,
-      },
-      {
-        name: "Green onion",
-        amount: 3,
-        unit: "stalks",
-        category: "produce",
-        price: 0.9,
-      },
-    ],
-  },
-  {
-    id: "sm-primavera",
-    name: "Pasta Primavera",
-    emoji: "🍝",
-    mealType: "dinner",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Penne pasta",
-        amount: 1,
-        unit: "box",
-        category: "grains",
-        price: 1.8,
-      },
-      {
-        name: "Zucchini",
-        amount: 1,
-        unit: "",
-        category: "produce",
-        price: 0.9,
-      },
-      {
-        name: "Cherry tomatoes",
-        amount: 1,
-        unit: "cup",
-        category: "produce",
-        price: 2.5,
-      },
-      {
-        name: "Parmesan cheese",
-        amount: 0.5,
-        unit: "cup",
-        category: "dairy",
-        price: 0.75,
-      },
-      {
-        name: "Olive oil",
-        amount: 2,
-        unit: "tbsp",
-        category: "pantry",
-        price: 0.7,
-      },
-    ],
-  },
-  {
-    id: "sm-lentilsoup",
-    name: "Lentil Soup",
-    emoji: "🥣",
-    mealType: "dinner",
-    baseServings: 4,
-    ingredients: [
-      {
-        name: "Lentils",
-        amount: 1,
-        unit: "cup",
-        category: "pantry",
-        price: 1.0,
-      },
-      { name: "Carrots", amount: 2, unit: "", category: "produce", price: 0.6 },
-      {
-        name: "Celery",
-        amount: 2,
-        unit: "stalks",
-        category: "produce",
-        price: 0.8,
-      },
-      { name: "Onion", amount: 1, unit: "", category: "produce", price: 0.6 },
-      {
-        name: "Vegetable broth",
-        amount: 4,
-        unit: "cup",
-        category: "pantry",
-        price: 2.4,
-      },
-      { name: "Cumin", amount: 1, unit: "tsp", category: "other", price: 0.2 },
-    ],
-  },
-];
+const EMOJI_CHOICES = ["🍽️", "🍲", "🥗", "🌮", "🍕", "🍳", "🥪", "🍜", "🍔", "🍛", "🐟", "🍚", "🥞", "🥣", "🌯"];
 
 // ---------- date helpers ----------
 
@@ -896,22 +78,12 @@ function isSameMonth(a, b) {
 }
 function formatRange(weekStart) {
   const end = addDays(weekStart, 6);
-  const startStr = weekStart.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
-  const endStr = end.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const startStr = weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const endStr = end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   return `${startStr} – ${endStr}`;
 }
 function formatMonthLabel(monthAnchor) {
-  return monthAnchor.toLocaleDateString("en-US", {
-    month: "long",
-    year: "numeric",
-  });
+  return monthAnchor.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 }
 function formatAmount(n) {
   if (n === null || n === undefined || isNaN(n)) return "";
@@ -936,30 +108,20 @@ function buildShoppingList(assignments, includeKeys) {
   Object.entries(assignments).forEach(([dKey, mealsForDay]) => {
     if (!includeSet.has(dKey)) return;
     (mealsForDay || []).forEach((meal) => {
-      const scale = meal.baseServings
-        ? (meal.servings || meal.baseServings) / meal.baseServings
-        : 1;
+      const scale = meal.baseServings ? (meal.servings || meal.baseServings) / meal.baseServings : 1;
       (meal.ingredients || []).forEach((ing) => {
-        const category = CATEGORY_ORDER.includes(ing.category)
-          ? ing.category
-          : "other";
+        const category = CATEGORY_ORDER.includes(ing.category) ? ing.category : "other";
         const unit = (ing.unit || "").trim();
         const name = (ing.name || "").trim();
         if (!name) return;
         const key = name.toLowerCase() + "|" + unit.toLowerCase();
         if (!buckets[category]) buckets[category] = {};
         const amountNum =
-          ing.amount === "" ||
-          ing.amount === null ||
-          ing.amount === undefined ||
-          isNaN(Number(ing.amount))
+          ing.amount === "" || ing.amount === null || ing.amount === undefined || isNaN(Number(ing.amount))
             ? null
             : Number(ing.amount) * scale;
         const priceNum =
-          ing.price === "" ||
-          ing.price === null ||
-          ing.price === undefined ||
-          isNaN(Number(ing.price))
+          ing.price === "" || ing.price === null || ing.price === undefined || isNaN(Number(ing.price))
             ? null
             : Number(ing.price) * scale;
         if (!buckets[category][key]) {
@@ -972,10 +134,7 @@ function buildShoppingList(assignments, includeKeys) {
           };
         } else {
           const existing = buckets[category][key];
-          existing.amount =
-            existing.amount !== null && amountNum !== null
-              ? existing.amount + amountNum
-              : null;
+          existing.amount = existing.amount !== null && amountNum !== null ? existing.amount + amountNum : null;
           if (priceNum !== null) {
             existing.priceSum += priceNum;
             existing.priceCount += 1;
@@ -985,21 +144,13 @@ function buildShoppingList(assignments, includeKeys) {
     });
   });
   return CATEGORY_ORDER.filter((c) => buckets[c]).map((c) => {
-    const items = Object.values(buckets[c]).sort((a, b) =>
-      a.name.localeCompare(b.name),
-    );
-    const categoryTotal = items.reduce(
-      (s, it) => s + (it.priceCount > 0 ? it.priceSum : 0),
-      0,
-    );
+    const items = Object.values(buckets[c]).sort((a, b) => a.name.localeCompare(b.name));
+    const categoryTotal = items.reduce((s, it) => s + (it.priceCount > 0 ? it.priceSum : 0), 0);
     return { category: c, items, categoryTotal };
   });
 }
 
-const BAR_WIDTHS = [
-  2, 4, 1, 3, 2, 5, 1, 2, 4, 3, 1, 2, 5, 2, 1, 3, 4, 2, 1, 3, 2, 4, 1, 3, 2, 5,
-  1, 2,
-];
+const BAR_WIDTHS = [2, 4, 1, 3, 2, 5, 1, 2, 4, 3, 1, 2, 5, 2, 1, 3, 4, 2, 1, 3, 2, 4, 1, 3, 2, 5, 1, 2];
 
 function makeInstanceId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -1009,14 +160,57 @@ function makeCustomMealId() {
 }
 
 function emptyIngredientRow() {
-  return {
-    rid: Math.random().toString(36).slice(2, 9),
-    name: "",
-    amount: "",
-    unit: "",
-    price: "",
-    category: "produce",
-  };
+  return { rid: Math.random().toString(36).slice(2, 9), name: "", amount: "", unit: "", price: "", category: "produce" };
+}
+
+// ---------- AI meal suggestions ----------
+
+function buildMealSuggestionPrompt(userPrompt, dayLabel) {
+  const want = userPrompt && userPrompt.trim() ? userPrompt.trim() : "any tasty, well-rounded meal";
+  return `You are a meal-planning assistant. Suggest 4 distinct meal ideas for ${dayLabel}, based on this request: "${want}".
+
+Respond with ONLY a raw JSON array — no markdown, no code fences, no commentary before or after — matching exactly this shape:
+[
+  {
+    "name": "string, meal name",
+    "emoji": "a single emoji representing the dish",
+    "mealType": "breakfast" | "lunch" | "dinner" | "snack",
+    "baseServings": integer, typically 4,
+    "ingredients": [
+      { "name": "string", "amount": number, "unit": "string such as cup, tbsp, lb, or empty string for whole items", "category": "produce" | "protein" | "dairy" | "grains" | "pantry" | "other", "price": number (estimated total USD cost for this ingredient at the given amount, rough US grocery average) }
+    ]
+  }
+]
+
+Return exactly 4 meals, each with 4-7 realistic ingredients. Output nothing except the JSON array itself.`;
+}
+
+function parseMealSuggestions(raw) {
+  let cleaned = (raw || "").trim();
+  cleaned = cleaned.replace(/^```json/i, "").replace(/^```/, "").replace(/```$/, "").trim();
+  const parsed = JSON.parse(cleaned);
+  if (!Array.isArray(parsed)) throw new Error("Unexpected response shape from the model.");
+  return parsed.map((m, i) => {
+    const mealType = String(m.mealType || "dinner").toLowerCase();
+    return {
+      id: `ai-${Date.now()}-${i}`,
+      name: String(m.name || "Untitled meal").trim(),
+      emoji: String(m.emoji || "🍽️").trim() || "🍽️",
+      mealType: Object.prototype.hasOwnProperty.call(MEAL_TYPE_META, mealType) ? mealType : "dinner",
+      baseServings: Number(m.baseServings) > 0 ? Math.round(Number(m.baseServings)) : 4,
+      ingredients: Array.isArray(m.ingredients)
+        ? m.ingredients
+            .map((ing) => ({
+              name: String(ing.name || "").trim(),
+              amount: ing.amount === undefined || ing.amount === null || isNaN(Number(ing.amount)) ? null : Number(ing.amount),
+              unit: String(ing.unit || "").trim(),
+              category: CATEGORY_ORDER.includes(ing.category) ? ing.category : "other",
+              price: ing.price === undefined || ing.price === null || isNaN(Number(ing.price)) ? null : Number(ing.price),
+            }))
+            .filter((ing) => ing.name)
+        : [],
+    };
+  });
 }
 
 export default function App() {
@@ -1027,24 +221,34 @@ export default function App() {
   const [customMeals, setCustomMeals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [storageWarning, setStorageWarning] = useState(false);
-  const [aiPrompt, setAiPrompt] = useState(
-    "Suggest one dinner idea in a single short sentence.",
-  );
-  const [aiResponse, setAiResponse] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [geminiKeySaved, setGeminiKeySaved] = useState(false);
+  const [keyEditing, setKeyEditing] = useState(false);
+  const [keyInputValue, setKeyInputValue] = useState("");
+  const [keyStatusMsg, setKeyStatusMsg] = useState("");
+  const [onboardingKeyInput, setOnboardingKeyInput] = useState("");
+  const [onboardingStatusMsg, setOnboardingStatusMsg] = useState("");
+
+  const [showAskAI, setShowAskAI] = useState(false);
+  const [askMessages, setAskMessages] = useState([]);
+  const [askInput, setAskInput] = useState("");
+  const [askSending, setAskSending] = useState(false);
 
   const [activeDayKey, setActiveDayKey] = useState(null);
   const [modalTab, setModalTab] = useState("suggested");
-  const [search, setSearch] = useState("");
   const [showShoppingList, setShowShoppingList] = useState(false);
+
+  const [aiSuggestPrompt, setAiSuggestPrompt] = useState("");
+  const [aiSuggestions, setAiSuggestions] = useState([]);
+  const [aiSuggestLoading, setAiSuggestLoading] = useState(false);
+  const [aiSuggestError, setAiSuggestError] = useState("");
 
   const [newMealName, setNewMealName] = useState("");
   const [newMealEmoji, setNewMealEmoji] = useState("🍽️");
   const [newMealType, setNewMealType] = useState("dinner");
   const [newMealServings, setNewMealServings] = useState(4);
-  const [newMealIngredients, setNewMealIngredients] = useState([
-    emptyIngredientRow(),
-  ]);
+  const [newMealIngredients, setNewMealIngredients] = useState([emptyIngredientRow()]);
 
   const today = new Date();
 
@@ -1063,6 +267,25 @@ export default function App() {
         setCustomMeals([]);
       }
       setLoading(false);
+    })();
+    (async () => {
+      try {
+        const exists = await hasApiKey();
+        setGeminiKeySaved(!!exists);
+        setKeyEditing(!exists);
+        if (!exists) {
+          let dismissed = null;
+          try {
+            dismissed = await storage.get("onboarding-dismissed");
+          } catch {
+            dismissed = null;
+          }
+          if (!dismissed) setShowOnboarding(true);
+        }
+      } catch {
+        setGeminiKeySaved(false);
+        setKeyEditing(true);
+      }
     })();
   }, []);
 
@@ -1083,14 +306,8 @@ export default function App() {
 
   const weekStart = useMemo(() => getMonday(cursorDate), [cursorDate]);
   const monthAnchor = useMemo(() => startOfMonth(cursorDate), [cursorDate]);
-  const days = useMemo(
-    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
-    [weekStart],
-  );
-  const monthGridDates = useMemo(
-    () => getMonthGridDates(monthAnchor),
-    [monthAnchor],
-  );
+  const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
+  const monthGridDates = useMemo(() => getMonthGridDates(monthAnchor), [monthAnchor]);
 
   const rangeDateKeys = useMemo(() => {
     if (viewMode === "week") return days.map(dateKey);
@@ -1106,29 +323,39 @@ export default function App() {
   }, [viewMode, days, cursorDate]);
 
   function goPrev() {
-    setCursorDate((d) =>
-      viewMode === "week" ? addDays(d, -7) : addMonths(d, -1),
-    );
+    setCursorDate((d) => (viewMode === "week" ? addDays(d, -7) : addMonths(d, -1)));
   }
   function goNext() {
-    setCursorDate((d) =>
-      viewMode === "week" ? addDays(d, 7) : addMonths(d, 1),
-    );
+    setCursorDate((d) => (viewMode === "week" ? addDays(d, 7) : addMonths(d, 1)));
   }
   function goToday() {
     setCursorDate(new Date());
   }
 
-  async function testAI() {
-    setAiLoading(true);
-    setAiResponse("");
+  async function saveKeyFromSettings() {
+    const trimmed = keyInputValue.trim();
+    if (!trimmed) return;
     try {
-      const result = await askLLM(aiPrompt);
-      setAiResponse(result);
+      await saveApiKey(trimmed);
+      setGeminiKeySaved(true);
+      setKeyEditing(false);
+      setKeyInputValue("");
+      setKeyStatusMsg("Saved");
+      setTimeout(() => setKeyStatusMsg(""), 2000);
     } catch (e) {
-      setAiResponse(`⚠️ ${e?.message || e}`);
+      setKeyStatusMsg(`⚠️ ${e?.message || e}`);
     }
-    setAiLoading(false);
+  }
+
+  async function removeSavedKey() {
+    try {
+      await clearApiKey();
+    } catch {
+      // ignore — worst case the file wasn't there to begin with
+    }
+    setGeminiKeySaved(false);
+    setKeyEditing(true);
+    setKeyStatusMsg("");
   }
 
   function addMealToDay(dayKey, meal) {
@@ -1147,7 +374,6 @@ export default function App() {
       return next;
     });
     setModalTab("suggested");
-    setSearch("");
   }
 
   function updateMealServings(dayKey, instanceId, nextServings) {
@@ -1155,9 +381,7 @@ export default function App() {
     setAssignments((prev) => {
       const next = {
         ...prev,
-        [dayKey]: (prev[dayKey] || []).map((m) =>
-          m.instanceId === instanceId ? { ...m, servings: clamped } : m,
-        ),
+        [dayKey]: (prev[dayKey] || []).map((m) => (m.instanceId === instanceId ? { ...m, servings: clamped } : m)),
       };
       persistAssignments(next);
       return next;
@@ -1166,12 +390,7 @@ export default function App() {
 
   function removeMealFromDay(dayKey, instanceId) {
     setAssignments((prev) => {
-      const next = {
-        ...prev,
-        [dayKey]: (prev[dayKey] || []).filter(
-          (m) => m.instanceId !== instanceId,
-        ),
-      };
+      const next = { ...prev, [dayKey]: (prev[dayKey] || []).filter((m) => m.instanceId !== instanceId) };
       persistAssignments(next);
       return next;
     });
@@ -1203,9 +422,7 @@ export default function App() {
   }
 
   function updateIngredientRow(rid, field, value) {
-    setNewMealIngredients((prev) =>
-      prev.map((row) => (row.rid === rid ? { ...row, [field]: value } : row)),
-    );
+    setNewMealIngredients((prev) => prev.map((row) => (row.rid === rid ? { ...row, [field]: value } : row)));
   }
   function removeIngredientRow(rid) {
     setNewMealIngredients((prev) => prev.filter((row) => row.rid !== rid));
@@ -1220,19 +437,10 @@ export default function App() {
         amount: row.amount === "" ? null : Number(row.amount),
         unit: row.unit.trim(),
         price: row.price === "" ? null : Number(row.price),
-        category: CATEGORY_ORDER.includes(row.category)
-          ? row.category
-          : "other",
+        category: CATEGORY_ORDER.includes(row.category) ? row.category : "other",
       }));
     if (!name || ingredients.length === 0) return;
-    const meal = {
-      id: makeCustomMealId(),
-      name,
-      emoji: newMealEmoji,
-      mealType: newMealType,
-      baseServings: newMealServings || 4,
-      ingredients,
-    };
+    const meal = { id: makeCustomMealId(), name, emoji: newMealEmoji, mealType: newMealType, baseServings: newMealServings || 4, ingredients };
     setCustomMeals((prev) => {
       const next = [...prev, meal];
       persistCustomMeals(next);
@@ -1243,33 +451,81 @@ export default function App() {
     setModalTab("mine");
   }
 
-  const shoppingList = useMemo(
-    () => buildShoppingList(assignments, rangeDateKeys),
-    [assignments, rangeDateKeys],
-  );
-  const totalItems = shoppingList.reduce(
-    (sum, cat) => sum + cat.items.length,
-    0,
-  );
-  const grandTotal = shoppingList.reduce(
-    (sum, cat) => sum + cat.categoryTotal,
-    0,
-  );
+  const shoppingList = useMemo(() => buildShoppingList(assignments, rangeDateKeys), [assignments, rangeDateKeys]);
+  const totalItems = shoppingList.reduce((sum, cat) => sum + cat.items.length, 0);
+  const grandTotal = shoppingList.reduce((sum, cat) => sum + cat.categoryTotal, 0);
   const itemsWithoutPrice = shoppingList.reduce(
     (sum, cat) => sum + cat.items.filter((it) => it.priceCount === 0).length,
-    0,
-  );
-  const filteredLibrary = MEAL_LIBRARY.filter((m) =>
-    m.name.toLowerCase().includes(search.toLowerCase()),
+    0
   );
   const activeDayMeals = activeDayKey ? assignments[activeDayKey] || [] : [];
   const activeDayLabel = activeDayKey
-    ? new Date(activeDayKey + "T00:00:00").toLocaleDateString("en-US", {
-        weekday: "long",
-        month: "long",
-        day: "numeric",
-      })
+    ? new Date(activeDayKey + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
     : "";
+
+  function dismissOnboarding() {
+    setShowOnboarding(false);
+    storage.set("onboarding-dismissed", "1").catch(() => {});
+  }
+
+  async function saveKeyFromOnboarding() {
+    const trimmed = onboardingKeyInput.trim();
+    if (!trimmed) return;
+    try {
+      await saveApiKey(trimmed);
+      setGeminiKeySaved(true);
+      setKeyEditing(false);
+      setOnboardingKeyInput("");
+      setShowOnboarding(false);
+    } catch (e) {
+      setOnboardingStatusMsg(`⚠️ ${e?.message || e}`);
+    }
+  }
+
+  async function sendAskMessage() {
+    const text = askInput.trim();
+    if (!text || askSending) return;
+    setAskMessages((prev) => [...prev, { role: "user", text }]);
+    setAskInput("");
+    setAskSending(true);
+    try {
+      const result = await askLLM(text);
+      setAskMessages((prev) => [...prev, { role: "assistant", text: result }]);
+    } catch (e) {
+      setAskMessages((prev) => [...prev, { role: "assistant", text: `⚠️ ${e?.message || e}` }]);
+    }
+    setAskSending(false);
+  }
+
+  async function generateMealSuggestions() {
+    setAiSuggestLoading(true);
+    setAiSuggestError("");
+    setAiSuggestions([]);
+    try {
+      const raw = await askLLM(buildMealSuggestionPrompt(aiSuggestPrompt, activeDayLabel || "today"));
+      const parsed = parseMealSuggestions(raw);
+      setAiSuggestions(parsed);
+    } catch (e) {
+      setAiSuggestError(`Couldn't generate suggestions: ${e?.message || e}`);
+    }
+    setAiSuggestLoading(false);
+  }
+
+  function saveSuggestionToMyMeals(meal) {
+    const toSave = {
+      id: makeCustomMealId(),
+      name: meal.name,
+      emoji: meal.emoji,
+      mealType: meal.mealType,
+      baseServings: meal.baseServings,
+      ingredients: meal.ingredients,
+    };
+    setCustomMeals((prev) => {
+      const next = [...prev, toSave];
+      persistCustomMeals(next);
+      return next;
+    });
+  }
 
   return (
     <div className="mp-app mp-body">
@@ -1415,10 +671,26 @@ export default function App() {
 
         .mp-loading { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:60vh; gap:10px; }
         .mp-warning { max-width:1100px; margin:0 auto 16px; background:rgba(255,47,120,0.15); border:1px solid var(--magenta); color:var(--text); padding:10px 14px; border-radius:10px; font-size:0.85rem; }
-        .ai-test-panel { max-width:1100px; margin:0 auto 16px; background:var(--panel); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:14px 16px; }
         .ai-test-row { display:flex; gap:8px; align-items:center; }
         .ai-test-btn { width:auto; flex-shrink:0; padding:10px 20px; }
-        .ai-test-response { margin-top:10px; font-family:'Space Mono',monospace; font-size:0.85rem; color:var(--text-dim); background:rgba(255,255,255,0.04); border-radius:8px; padding:10px 12px; white-space:pre-wrap; }
+        .settings-section { padding-top:4px; }
+        .settings-section-title { display:flex; align-items:center; gap:6px; font-size:0.85rem; font-weight:600; margin-bottom:8px; color:var(--text); }
+        .settings-desc { font-size:0.8rem; color:var(--text-dim); line-height:1.5; margin-bottom:14px; }
+        .settings-key-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+        .settings-key-pill { display:flex; align-items:center; gap:5px; background:rgba(45,226,230,0.12); color:var(--cyan); border:1px solid rgba(45,226,230,0.3); border-radius:999px; padding:4px 10px; font-size:0.78rem; }
+        .settings-link-btn { background:none; border:none; color:var(--text-dim); text-decoration:underline; font-size:0.78rem; cursor:pointer; padding:0; }
+        .settings-link-btn:hover { color:var(--text); }
+        .settings-link-btn.danger:hover { color:var(--magenta-soft); }
+        .settings-get-key-link { font-size:0.78rem; color:var(--cyan); text-decoration:none; }
+        .settings-get-key-link:hover { text-decoration:underline; }
+        .settings-status-msg { margin-top:8px; font-size:0.78rem; color:var(--text-dim); font-family:'Space Mono',monospace; }
+        .ask-panel { position:fixed; top:0; right:0; height:100vh; width:100%; max-width:400px; background: linear-gradient(180deg, var(--night-mid), var(--night)); color:var(--text); box-shadow:-10px 0 30px rgba(0,0,0,0.5); z-index:70; display:flex; flex-direction:column; border-left: 1px solid var(--border-glow); }
+        .ask-messages { flex:1; overflow-y:auto; padding:16px 20px; display:flex; flex-direction:column; gap:10px; }
+        .ask-msg { max-width:85%; padding:10px 12px; border-radius:12px; font-size:0.85rem; line-height:1.5; white-space:pre-wrap; }
+        .ask-msg-user { align-self:flex-end; background:linear-gradient(90deg, var(--magenta), var(--violet)); color:#fff; }
+        .ask-msg-assistant { align-self:flex-start; background:rgba(255,255,255,0.06); color:var(--text); }
+        .ask-msg-loading { opacity:0.6; font-style:italic; }
+        .ask-input-row { display:flex; gap:8px; padding:14px 20px; border-top:1px solid rgba(255,255,255,0.1); }
       `}</style>
 
       <div className="mp-content">
@@ -1426,103 +698,43 @@ export default function App() {
           <div className="mp-title-row">
             <Utensils size={26} color="var(--magenta-soft)" />
             <div>
-              <div
-                className="mp-display"
-                style={{ fontSize: "1.5rem", fontWeight: 700, lineHeight: 1.2 }}
-              >
+              <div className="mp-display" style={{ fontSize: "1.5rem", fontWeight: 700, lineHeight: 1.2 }}>
                 {viewMode === "week" ? "This Week's Menu" : "This Month's Menu"}
               </div>
-              <div
-                className="mp-mono"
-                style={{ fontSize: "0.76rem", opacity: 0.75, marginTop: 6 }}
-              >
-                {viewMode === "week"
-                  ? formatRange(weekStart)
-                  : formatMonthLabel(monthAnchor)}
+              <div className="mp-mono" style={{ fontSize: "0.76rem", opacity: 0.75, marginTop: 6 }}>
+                {viewMode === "week" ? formatRange(weekStart) : formatMonthLabel(monthAnchor)}
               </div>
             </div>
           </div>
           <div className="mp-nav">
             <div className="view-toggle">
-              <button
-                className={`view-toggle-btn${viewMode === "week" ? " active" : ""}`}
-                onClick={() => setViewMode("week")}
-              >
-                Week
-              </button>
-              <button
-                className={`view-toggle-btn${viewMode === "month" ? " active" : ""}`}
-                onClick={() => setViewMode("month")}
-              >
-                Month
-              </button>
+              <button className={`view-toggle-btn${viewMode === "week" ? " active" : ""}`} onClick={() => setViewMode("week")}>Week</button>
+              <button className={`view-toggle-btn${viewMode === "month" ? " active" : ""}`} onClick={() => setViewMode("month")}>Month</button>
             </div>
-            <button
-              className="mp-nav-btn"
-              onClick={goPrev}
-              aria-label="Previous"
-            >
+            <button className="mp-nav-btn" onClick={goPrev} aria-label="Previous">
               <ChevronLeft size={18} />
             </button>
-            <button className="mp-today-btn" onClick={goToday}>
-              Today
-            </button>
+            <button className="mp-today-btn" onClick={goToday}>Today</button>
             <button className="mp-nav-btn" onClick={goNext} aria-label="Next">
               <ChevronRight size={18} />
+            </button>
+            <button className="mp-nav-btn" onClick={() => setShowAskAI(true)} aria-label="Ask AI">
+              <MessageCircle size={16} />
+            </button>
+            <button className="mp-nav-btn" onClick={() => setShowSettings(true)} aria-label="Settings">
+              <Settings size={16} />
             </button>
           </div>
         </div>
 
         {storageWarning && (
-          <div className="mp-warning">
-            Changes aren't saving right now, so your plan may reset on reload.
-            You can keep going in the meantime.
-          </div>
+          <div className="mp-warning">Changes aren't saving right now, so your plan may reset on reload. You can keep going in the meantime.</div>
         )}
-
-        <div className="ai-test-panel">
-          <div className="mp-field-label">
-            AI connection test (auto: local Ollama, falls back to Claude)
-          </div>
-          <div className="ai-test-row" style={{ marginBottom: 8 }}>
-            <input
-              className="mp-input"
-              placeholder="Paste your Anthropic API key here to test cloud fallback…"
-              onBlur={(e) => {
-                if (e.target.value.trim()) saveApiKey(e.target.value.trim());
-              }}
-            />
-          </div>
-          <div className="ai-test-row">
-            <input
-              className="mp-input"
-              value={aiPrompt}
-              onChange={(e) => setAiPrompt(e.target.value)}
-              placeholder="Ask the AI something…"
-            />
-            <button
-              className="mp-primary-btn ai-test-btn"
-              onClick={testAI}
-              disabled={aiLoading}
-            >
-              {aiLoading ? "Thinking…" : "Ask"}
-            </button>
-          </div>
-          {aiResponse && <div className="ai-test-response">{aiResponse}</div>}
-        </div>
 
         {loading ? (
           <div className="mp-loading">
-            <Loader2
-              size={28}
-              style={{ animation: "spin 1s linear infinite" }}
-            />
-            <div
-              className="mp-mono"
-              style={{ fontSize: "0.85rem", opacity: 0.7 }}
-            >
-              Setting the table…
-            </div>
+            <Loader2 size={28} style={{ animation: "spin 1s linear infinite" }} />
+            <div className="mp-mono" style={{ fontSize: "0.85rem", opacity: 0.7 }}>Setting the table…</div>
             <style>{`@keyframes spin { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }`}</style>
           </div>
         ) : viewMode === "week" ? (
@@ -1534,73 +746,24 @@ export default function App() {
               return (
                 <div className={`day-card${isToday ? " today" : ""}`} key={key}>
                   <div className="day-card-head">
-                    <div className="day-name">
-                      {d.toLocaleDateString("en-US", { weekday: "short" })}
-                    </div>
-                    <div className="day-date">
-                      {d.toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                      })}
-                    </div>
+                    <div className="day-name">{d.toLocaleDateString("en-US", { weekday: "short" })}</div>
+                    <div className="day-date">{d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
                   </div>
                   <div className="meal-list">
                     {meals.map((m) => (
                       <div className="meal-chip" key={m.instanceId}>
                         <div className="meal-chip-top">
-                          <span
-                            className="meal-dot"
-                            style={{
-                              background: (
-                                MEAL_TYPE_META[m.mealType] ||
-                                MEAL_TYPE_META.dinner
-                              ).color,
-                              color: (
-                                MEAL_TYPE_META[m.mealType] ||
-                                MEAL_TYPE_META.dinner
-                              ).color,
-                            }}
-                          />
+                          <span className="meal-dot" style={{ background: (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).color, color: (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).color }} />
                           <span style={{ fontSize: "1rem" }}>{m.emoji}</span>
                           <span className="meal-name">{m.name}</span>
-                          <button
-                            className="meal-remove"
-                            onClick={() => removeMealFromDay(key, m.instanceId)}
-                            aria-label="Remove meal"
-                          >
+                          <button className="meal-remove" onClick={() => removeMealFromDay(key, m.instanceId)} aria-label="Remove meal">
                             <X size={14} />
                           </button>
                         </div>
                         <div className="meal-servings">
-                          <button
-                            className="servings-btn"
-                            onClick={() =>
-                              updateMealServings(
-                                key,
-                                m.instanceId,
-                                (m.servings || m.baseServings || 4) - 1,
-                              )
-                            }
-                            aria-label="Fewer servings"
-                          >
-                            −
-                          </button>
-                          <span>
-                            {m.servings || m.baseServings || 4} servings
-                          </span>
-                          <button
-                            className="servings-btn"
-                            onClick={() =>
-                              updateMealServings(
-                                key,
-                                m.instanceId,
-                                (m.servings || m.baseServings || 4) + 1,
-                              )
-                            }
-                            aria-label="More servings"
-                          >
-                            +
-                          </button>
+                          <button className="servings-btn" onClick={() => updateMealServings(key, m.instanceId, (m.servings || m.baseServings || 4) - 1)} aria-label="Fewer servings">−</button>
+                          <span>{m.servings || m.baseServings || 4} servings</span>
+                          <button className="servings-btn" onClick={() => updateMealServings(key, m.instanceId, (m.servings || m.baseServings || 4) + 1)} aria-label="More servings">+</button>
                         </div>
                       </div>
                     ))}
@@ -1610,7 +773,9 @@ export default function App() {
                     onClick={() => {
                       setActiveDayKey(key);
                       setModalTab("suggested");
-                      setSearch("");
+                      setAiSuggestPrompt("");
+                      setAiSuggestions([]);
+                      setAiSuggestError("");
                     }}
                   >
                     <Plus size={14} /> Add meal
@@ -1623,9 +788,7 @@ export default function App() {
           <>
             <div className="month-weekday-row">
               {WEEKDAY_LABELS.map((w) => (
-                <div className="month-weekday-label" key={w}>
-                  {w}
-                </div>
+                <div className="month-weekday-label" key={w}>{w}</div>
               ))}
             </div>
             <div className="month-grid">
@@ -1643,19 +806,17 @@ export default function App() {
                     onClick={() => {
                       setActiveDayKey(key);
                       setModalTab("suggested");
-                      setSearch("");
+                      setAiSuggestPrompt("");
+                      setAiSuggestions([]);
+                      setAiSuggestError("");
                     }}
                   >
                     <div className="month-cell-date">{d.getDate()}</div>
                     <div className="month-preview-row">
                       {preview.map((m) => (
-                        <span key={m.instanceId} title={m.name}>
-                          {m.emoji}
-                        </span>
+                        <span key={m.instanceId} title={m.name}>{m.emoji}</span>
                       ))}
-                      {extra > 0 && (
-                        <span className="month-more-badge">+{extra}</span>
-                      )}
+                      {extra > 0 && <span className="month-more-badge">+{extra}</span>}
                     </div>
                   </div>
                 );
@@ -1675,18 +836,8 @@ export default function App() {
         <div className="mp-overlay" onClick={() => setActiveDayKey(null)}>
           <div className="mp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="mp-modal-head">
-              <div
-                className="mp-display"
-                style={{ fontSize: "1.2rem", fontWeight: 600 }}
-              >
-                Add a meal
-              </div>
-              <button
-                className="mp-close-btn"
-                onClick={() => setActiveDayKey(null)}
-              >
-                <X size={16} />
-              </button>
+              <div className="mp-display" style={{ fontSize: "1.2rem", fontWeight: 600 }}>Add a meal</div>
+              <button className="mp-close-btn" onClick={() => setActiveDayKey(null)}><X size={16} /></button>
             </div>
             <div className="modal-day-title">{activeDayLabel}</div>
 
@@ -1695,117 +846,79 @@ export default function App() {
                 {activeDayMeals.map((m) => (
                   <div className="meal-chip" key={m.instanceId}>
                     <div className="meal-chip-top">
-                      <span
-                        className="meal-dot"
-                        style={{
-                          background: (
-                            MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner
-                          ).color,
-                          color: (
-                            MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner
-                          ).color,
-                        }}
-                      />
+                      <span className="meal-dot" style={{ background: (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).color, color: (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).color }} />
                       <span style={{ fontSize: "1rem" }}>{m.emoji}</span>
                       <span className="meal-name">{m.name}</span>
-                      <button
-                        className="meal-remove"
-                        onClick={() =>
-                          removeMealFromDay(activeDayKey, m.instanceId)
-                        }
-                        aria-label="Remove meal"
-                      >
+                      <button className="meal-remove" onClick={() => removeMealFromDay(activeDayKey, m.instanceId)} aria-label="Remove meal">
                         <X size={14} />
                       </button>
                     </div>
                     <div className="meal-servings">
-                      <button
-                        className="servings-btn"
-                        onClick={() =>
-                          updateMealServings(
-                            activeDayKey,
-                            m.instanceId,
-                            (m.servings || m.baseServings || 4) - 1,
-                          )
-                        }
-                        aria-label="Fewer servings"
-                      >
-                        −
-                      </button>
+                      <button className="servings-btn" onClick={() => updateMealServings(activeDayKey, m.instanceId, (m.servings || m.baseServings || 4) - 1)} aria-label="Fewer servings">−</button>
                       <span>{m.servings || m.baseServings || 4} servings</span>
-                      <button
-                        className="servings-btn"
-                        onClick={() =>
-                          updateMealServings(
-                            activeDayKey,
-                            m.instanceId,
-                            (m.servings || m.baseServings || 4) + 1,
-                          )
-                        }
-                        aria-label="More servings"
-                      >
-                        +
-                      </button>
+                      <button className="servings-btn" onClick={() => updateMealServings(activeDayKey, m.instanceId, (m.servings || m.baseServings || 4) + 1)} aria-label="More servings">+</button>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="modal-current-empty">
-                Nothing planned for this day yet.
-              </div>
+              <div className="modal-current-empty">Nothing planned for this day yet.</div>
             )}
 
             <div className="mp-tabs">
-              <button
-                className={`mp-tab${modalTab === "suggested" ? " active" : ""}`}
-                onClick={() => setModalTab("suggested")}
-              >
-                Suggested
-              </button>
-              <button
-                className={`mp-tab${modalTab === "mine" ? " active" : ""}`}
-                onClick={() => setModalTab("mine")}
-              >
-                My meals
-              </button>
-              <button
-                className={`mp-tab${modalTab === "new" ? " active" : ""}`}
-                onClick={() => setModalTab("new")}
-              >
-                New meal
-              </button>
+              <button className={`mp-tab${modalTab === "suggested" ? " active" : ""}`} onClick={() => setModalTab("suggested")}>Suggested</button>
+              <button className={`mp-tab${modalTab === "mine" ? " active" : ""}`} onClick={() => setModalTab("mine")}>My meals</button>
+              <button className={`mp-tab${modalTab === "new" ? " active" : ""}`} onClick={() => setModalTab("new")}>New meal</button>
             </div>
 
             {modalTab === "suggested" && (
               <>
-                <div className="mp-search">
-                  <Search size={16} color="var(--text-dim)" />
+                <span className="mp-field-label">What are you in the mood for?</span>
+                <div className="ai-test-row" style={{ marginBottom: 10 }}>
                   <input
-                    placeholder="Search meals…"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
+                    className="mp-input"
+                    value={aiSuggestPrompt}
+                    onChange={(e) => setAiSuggestPrompt(e.target.value)}
+                    placeholder="e.g. something quick with chicken, a cozy soup, vegetarian…"
+                    onKeyDown={(e) => { if (e.key === "Enter") generateMealSuggestions(); }}
                   />
+                  <button className="mp-primary-btn ai-test-btn" onClick={generateMealSuggestions} disabled={aiSuggestLoading}>
+                    {aiSuggestLoading ? "Thinking…" : "Suggest"}
+                  </button>
                 </div>
-                <div className="suggested-grid">
-                  {filteredLibrary.map((m) => (
-                    <button
-                      className="suggested-card"
-                      key={m.id}
-                      onClick={() => addMealToDay(activeDayKey, m)}
-                    >
-                      <div className="suggested-emoji">{m.emoji}</div>
-                      <div className="suggested-name">{m.name}</div>
-                      <div className="suggested-type">
-                        {MEAL_TYPE_META[m.mealType].label} · Serves{" "}
-                        {m.baseServings || 4}
+                <div className="settings-desc" style={{ marginBottom: 12 }}>
+                  AI-generated ideas — ingredient amounts and prices are rough estimates and may need adjusting.
+                </div>
+                {aiSuggestError && <div className="mp-warning" style={{ margin: "0 0 12px" }}>{aiSuggestError}</div>}
+                {aiSuggestLoading && (
+                  <div className="mp-loading" style={{ minHeight: 100 }}>
+                    <Loader2 size={24} style={{ animation: "spin 1s linear infinite" }} />
+                  </div>
+                )}
+                {!aiSuggestLoading && aiSuggestions.length > 0 && (
+                  <div className="suggested-grid">
+                    {aiSuggestions.map((m) => (
+                      <div
+                        className="suggested-card"
+                        role="button"
+                        tabIndex={0}
+                        key={m.id}
+                        onClick={() => addMealToDay(activeDayKey, m)}
+                        onKeyDown={(e) => { if (e.key === "Enter") addMealToDay(activeDayKey, m); }}
+                      >
+                        <button className="suggested-del" onClick={(e) => { e.stopPropagation(); saveSuggestionToMyMeals(m); }} aria-label="Save to My Meals" title="Save to My Meals">
+                          <Star size={12} />
+                        </button>
+                        <div className="suggested-emoji">{m.emoji}</div>
+                        <div className="suggested-name">{m.name}</div>
+                        <div className="suggested-type">{(MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).label} · Serves {m.baseServings}</div>
                       </div>
-                    </button>
-                  ))}
-                  {filteredLibrary.length === 0 && (
-                    <div className="mp-empty">No meals match "{search}".</div>
-                  )}
-                </div>
+                    ))}
+                  </div>
+                )}
+                {!aiSuggestLoading && aiSuggestions.length === 0 && !aiSuggestError && (
+                  <div className="mp-empty">Describe what you're craving above and tap "Suggest" for AI meal ideas.</div>
+                )}
               </>
             )}
 
@@ -1818,36 +931,18 @@ export default function App() {
                     tabIndex={0}
                     key={m.id}
                     onClick={() => addMealToDay(activeDayKey, m)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") addMealToDay(activeDayKey, m);
-                    }}
+                    onKeyDown={(e) => { if (e.key === "Enter") addMealToDay(activeDayKey, m); }}
                   >
-                    <button
-                      className="suggested-del"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteCustomMeal(m.id);
-                      }}
-                      aria-label="Delete meal"
-                    >
+                    <button className="suggested-del" onClick={(e) => { e.stopPropagation(); deleteCustomMeal(m.id); }} aria-label="Delete meal">
                       <Trash2 size={12} />
                     </button>
                     <div className="suggested-emoji">{m.emoji}</div>
                     <div className="suggested-name">{m.name}</div>
-                    <div className="suggested-type">
-                      {
-                        (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner)
-                          .label
-                      }{" "}
-                      · Serves {m.baseServings || 4}
-                    </div>
+                    <div className="suggested-type">{(MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).label} · Serves {m.baseServings || 4}</div>
                   </div>
                 ))}
                 {customMeals.length === 0 && (
-                  <div className="mp-empty">
-                    You haven't saved any meals yet — create one in the "New
-                    meal" tab.
-                  </div>
+                  <div className="mp-empty">You haven't saved any meals yet — create one in the "New meal" tab.</div>
                 )}
               </div>
             )}
@@ -1855,136 +950,45 @@ export default function App() {
             {modalTab === "new" && (
               <div>
                 <span className="mp-field-label">Meal name</span>
-                <input
-                  className="mp-input"
-                  style={{ marginBottom: 12 }}
-                  placeholder="e.g. Grandma's Meatloaf"
-                  value={newMealName}
-                  onChange={(e) => setNewMealName(e.target.value)}
-                />
+                <input className="mp-input" style={{ marginBottom: 12 }} placeholder="e.g. Grandma's Meatloaf" value={newMealName} onChange={(e) => setNewMealName(e.target.value)} />
 
                 <span className="mp-field-label">Icon</span>
                 <div className="emoji-row">
                   {EMOJI_CHOICES.map((em) => (
-                    <button
-                      key={em}
-                      className={`emoji-btn${newMealEmoji === em ? " selected" : ""}`}
-                      onClick={() => setNewMealEmoji(em)}
-                    >
-                      {em}
-                    </button>
+                    <button key={em} className={`emoji-btn${newMealEmoji === em ? " selected" : ""}`} onClick={() => setNewMealEmoji(em)}>{em}</button>
                   ))}
                 </div>
 
                 <span className="mp-field-label">Meal type</span>
-                <select
-                  className="mp-select"
-                  style={{ marginBottom: 14 }}
-                  value={newMealType}
-                  onChange={(e) => setNewMealType(e.target.value)}
-                >
+                <select className="mp-select" style={{ marginBottom: 14 }} value={newMealType} onChange={(e) => setNewMealType(e.target.value)}>
                   {Object.entries(MEAL_TYPE_META).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v.label}
-                    </option>
+                    <option key={k} value={k}>{v.label}</option>
                   ))}
                 </select>
 
-                <span className="mp-field-label">
-                  Servings this recipe makes
-                </span>
-                <input
-                  className="mp-input"
-                  style={{ marginBottom: 14, maxWidth: 120 }}
-                  type="number"
-                  min="1"
-                  max="99"
-                  value={newMealServings}
-                  onChange={(e) =>
-                    setNewMealServings(Number(e.target.value) || 4)
-                  }
-                />
+                <span className="mp-field-label">Servings this recipe makes</span>
+                <input className="mp-input" style={{ marginBottom: 14, maxWidth: 120 }} type="number" min="1" max="99" value={newMealServings} onChange={(e) => setNewMealServings(Number(e.target.value) || 4)} />
 
-                <span className="mp-field-label">
-                  Ingredients (name / qty / unit / est. price / category)
-                </span>
+                <span className="mp-field-label">Ingredients (name / qty / unit / est. price / category)</span>
                 {newMealIngredients.map((row) => (
                   <div className="ing-row" key={row.rid}>
-                    <input
-                      className="mp-input"
-                      placeholder="Ingredient"
-                      value={row.name}
-                      onChange={(e) =>
-                        updateIngredientRow(row.rid, "name", e.target.value)
-                      }
-                    />
-                    <input
-                      className="mp-input"
-                      type="number"
-                      min="0"
-                      placeholder="Qty"
-                      value={row.amount}
-                      onChange={(e) =>
-                        updateIngredientRow(row.rid, "amount", e.target.value)
-                      }
-                    />
-                    <input
-                      className="mp-input"
-                      placeholder="unit"
-                      value={row.unit}
-                      onChange={(e) =>
-                        updateIngredientRow(row.rid, "unit", e.target.value)
-                      }
-                    />
-                    <input
-                      className="mp-input"
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="$"
-                      value={row.price}
-                      onChange={(e) =>
-                        updateIngredientRow(row.rid, "price", e.target.value)
-                      }
-                    />
-                    <select
-                      className="mp-select"
-                      value={row.category}
-                      onChange={(e) =>
-                        updateIngredientRow(row.rid, "category", e.target.value)
-                      }
-                    >
+                    <input className="mp-input" placeholder="Ingredient" value={row.name} onChange={(e) => updateIngredientRow(row.rid, "name", e.target.value)} />
+                    <input className="mp-input" type="number" min="0" placeholder="Qty" value={row.amount} onChange={(e) => updateIngredientRow(row.rid, "amount", e.target.value)} />
+                    <input className="mp-input" placeholder="unit" value={row.unit} onChange={(e) => updateIngredientRow(row.rid, "unit", e.target.value)} />
+                    <input className="mp-input" type="number" min="0" step="0.01" placeholder="$" value={row.price} onChange={(e) => updateIngredientRow(row.rid, "price", e.target.value)} />
+                    <select className="mp-select" value={row.category} onChange={(e) => updateIngredientRow(row.rid, "category", e.target.value)}>
                       {CATEGORY_ORDER.map((c) => (
-                        <option key={c} value={c}>
-                          {CATEGORY_META[c].label}
-                        </option>
+                        <option key={c} value={c}>{CATEGORY_META[c].label}</option>
                       ))}
                     </select>
-                    <button
-                      className="ing-remove"
-                      onClick={() => removeIngredientRow(row.rid)}
-                      aria-label="Remove ingredient"
-                    >
-                      <X size={16} />
-                    </button>
+                    <button className="ing-remove" onClick={() => removeIngredientRow(row.rid)} aria-label="Remove ingredient"><X size={16} /></button>
                   </div>
                 ))}
-                <button
-                  className="mp-add-ing"
-                  onClick={() =>
-                    setNewMealIngredients((prev) => [
-                      ...prev,
-                      emptyIngredientRow(),
-                    ])
-                  }
-                >
+                <button className="mp-add-ing" onClick={() => setNewMealIngredients((prev) => [...prev, emptyIngredientRow()])}>
                   <Plus size={14} /> Add ingredient
                 </button>
                 <button className="mp-primary-btn" onClick={submitNewMeal}>
-                  <Sparkles
-                    size={14}
-                    style={{ marginRight: 6, verticalAlign: "-2px" }}
-                  />
+                  <Sparkles size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />
                   Save & add to day
                 </button>
               </div>
@@ -1994,98 +998,43 @@ export default function App() {
       )}
 
       {showShoppingList && (
-        <div
-          className="mp-overlay"
-          style={{ background: "rgba(8,4,16,0.55)" }}
-          onClick={() => setShowShoppingList(false)}
-        >
+        <div className="mp-overlay" style={{ background: "rgba(8,4,16,0.55)" }} onClick={() => setShowShoppingList(false)}>
           <div className="receipt-panel" onClick={(e) => e.stopPropagation()}>
             <div className="receipt-header">
               <div>
-                <div
-                  className="mp-display"
-                  style={{ fontSize: "1.1rem", fontWeight: 700 }}
-                >
-                  Shopping list
-                </div>
-                <div
-                  className="mp-mono"
-                  style={{ fontSize: "0.72rem", opacity: 0.8, marginTop: 4 }}
-                >
-                  {viewMode === "week"
-                    ? formatRange(weekStart)
-                    : formatMonthLabel(monthAnchor)}
+                <div className="mp-display" style={{ fontSize: "1.1rem", fontWeight: 700 }}>Shopping list</div>
+                <div className="mp-mono" style={{ fontSize: "0.72rem", opacity: 0.8, marginTop: 4 }}>
+                  {viewMode === "week" ? formatRange(weekStart) : formatMonthLabel(monthAnchor)}
                 </div>
               </div>
-              <button
-                className="mp-close-btn"
-                onClick={() => setShowShoppingList(false)}
-              >
-                <X size={16} />
-              </button>
+              <button className="mp-close-btn" onClick={() => setShowShoppingList(false)}><X size={16} /></button>
             </div>
-            <div className="receipt-disclaimer">
-              Prices are rough estimated U.S. averages — actual cost will vary
-              by store.
-            </div>
+            <div className="receipt-disclaimer">Prices are rough estimated U.S. averages — actual cost will vary by store.</div>
             <div className="receipt-content">
               {shoppingList.length === 0 ? (
-                <div className="mp-empty">
-                  No meals planned yet for this range. Add meals to build a
-                  list.
-                </div>
+                <div className="mp-empty">No meals planned yet for this range. Add meals to build a list.</div>
               ) : (
                 shoppingList.map((cat) => (
                   <div key={cat.category}>
                     <div className="receipt-cat-header">
-                      <span>
-                        {CATEGORY_META[cat.category].emoji}{" "}
-                        {CATEGORY_META[cat.category].label}
-                      </span>
-                      <span>
-                        {cat.categoryTotal > 0
-                          ? `$${cat.categoryTotal.toFixed(2)}`
-                          : ""}
-                      </span>
+                      <span>{CATEGORY_META[cat.category].emoji} {CATEGORY_META[cat.category].label}</span>
+                      <span>{cat.categoryTotal > 0 ? `$${cat.categoryTotal.toFixed(2)}` : ""}</span>
                     </div>
                     {cat.items.map((item) => {
                       const itemKey = `${cat.category}|${item.name.toLowerCase()}|${item.unit.toLowerCase()}`;
                       const isChecked = checked.has(itemKey);
-                      const avgUnitPrice =
-                        item.amount && item.amount > 0 && item.priceCount > 0
-                          ? item.priceSum / item.amount
-                          : null;
+                      const avgUnitPrice = item.amount && item.amount > 0 && item.priceCount > 0 ? item.priceSum / item.amount : null;
                       return (
                         <div key={itemKey}>
-                          <div
-                            className={`receipt-line${isChecked ? " done" : ""}`}
-                            onClick={() => toggleChecked(itemKey)}
-                          >
-                            <span
-                              className={`receipt-check${isChecked ? " on" : ""}`}
-                            >
-                              {isChecked && <Check size={10} />}
-                            </span>
+                          <div className={`receipt-line${isChecked ? " done" : ""}`} onClick={() => toggleChecked(itemKey)}>
+                            <span className={`receipt-check${isChecked ? " on" : ""}`}>{isChecked && <Check size={10} />}</span>
                             <span className="receipt-name">{item.name}</span>
                             <span className="receipt-dots" />
-                            <span className="receipt-qty">
-                              {item.amount !== null
-                                ? `${formatAmount(item.amount)}${item.unit ? " " + item.unit : ""}`
-                                : item.unit || "—"}
-                            </span>
+                            <span className="receipt-qty">{item.amount !== null ? `${formatAmount(item.amount)}${item.unit ? " " + item.unit : ""}` : (item.unit || "—")}</span>
                           </div>
                           <div className="receipt-price-line">
-                            {avgUnitPrice !== null && (
-                              <span>
-                                avg ${avgUnitPrice.toFixed(2)}/
-                                {item.unit || "ea"}
-                              </span>
-                            )}
-                            <span className="receipt-line-total">
-                              {item.priceCount > 0
-                                ? `$${item.priceSum.toFixed(2)}`
-                                : "—"}
-                            </span>
+                            {avgUnitPrice !== null && <span>avg ${avgUnitPrice.toFixed(2)}/{item.unit || "ea"}</span>}
+                            <span className="receipt-line-total">{item.priceCount > 0 ? `$${item.priceSum.toFixed(2)}` : "—"}</span>
                           </div>
                         </div>
                       );
@@ -2100,16 +1049,121 @@ export default function App() {
                   <span key={i} style={{ width: w + "px" }} />
                 ))}
               </div>
-              <div className="receipt-grand-total">
-                Estimated total: ${grandTotal.toFixed(2)}
-              </div>
+              <div className="receipt-grand-total">Estimated total: ${grandTotal.toFixed(2)}</div>
               <div className="receipt-grand-note">
                 {totalItems} item{totalItems === 1 ? "" : "s"}
-                {itemsWithoutPrice > 0
-                  ? ` · ${itemsWithoutPrice} without price data (not included above)`
-                  : ""}
+                {itemsWithoutPrice > 0 ? ` · ${itemsWithoutPrice} without price data (not included above)` : ""}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showSettings && (
+        <div className="mp-overlay" onClick={() => setShowSettings(false)}>
+          <div className="mp-modal" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+            <div className="mp-modal-head">
+              <div className="mp-display" style={{ fontSize: "1.2rem", fontWeight: 600 }}>Settings</div>
+              <button className="mp-close-btn" onClick={() => setShowSettings(false)}><X size={16} /></button>
+            </div>
+
+            <div className="settings-section">
+              <div className="settings-section-title">
+                <KeyRound size={15} /> AI assistant
+              </div>
+              <div className="settings-desc">
+                This app tries a local Ollama model first, and falls back to Google Gemini's free API when Ollama
+                isn't available (like on a phone). Your key is stored only on this device and never leaves it except
+                to talk to Google directly.
+              </div>
+
+              {geminiKeySaved && !keyEditing ? (
+                <div className="settings-key-row">
+                  <span className="settings-key-pill"><Check size={13} /> Gemini key saved</span>
+                  <button className="settings-link-btn" onClick={() => setKeyEditing(true)}>Change</button>
+                  <button className="settings-link-btn danger" onClick={removeSavedKey}>Remove</button>
+                </div>
+              ) : (
+                <>
+                  <div className="ai-test-row" style={{ marginBottom: 8 }}>
+                    <input
+                      className="mp-input"
+                      value={keyInputValue}
+                      onChange={(e) => setKeyInputValue(e.target.value)}
+                      placeholder="Paste your Gemini API key…"
+                    />
+                    <button className="mp-primary-btn ai-test-btn" onClick={saveKeyFromSettings}>Save</button>
+                  </div>
+                  <a className="settings-get-key-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
+                    Get a free key at aistudio.google.com/apikey →
+                  </a>
+                </>
+              )}
+              {keyStatusMsg && <div className="settings-status-msg">{keyStatusMsg}</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAskAI && (
+        <div className="mp-overlay" style={{ background: "rgba(8,4,16,0.55)" }} onClick={() => setShowAskAI(false)}>
+          <div className="ask-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="receipt-header">
+              <div>
+                <div className="mp-display" style={{ fontSize: "1.1rem", fontWeight: 700 }}>Ask AI</div>
+                <div className="mp-mono" style={{ fontSize: "0.72rem", opacity: 0.8, marginTop: 4 }}>Cooking questions, ideas, substitutions…</div>
+              </div>
+              <button className="mp-close-btn" onClick={() => setShowAskAI(false)}><X size={16} /></button>
+            </div>
+            <div className="ask-messages">
+              {askMessages.length === 0 && (
+                <div className="mp-empty">Ask anything — "what can I sub for buttermilk?", "how long do I roast a whole chicken?", etc.</div>
+              )}
+              {askMessages.map((m, i) => (
+                <div key={i} className={`ask-msg ask-msg-${m.role}`}>{m.text}</div>
+              ))}
+              {askSending && <div className="ask-msg ask-msg-assistant ask-msg-loading">Thinking…</div>}
+            </div>
+            <div className="ask-input-row">
+              <input
+                className="mp-input"
+                value={askInput}
+                onChange={(e) => setAskInput(e.target.value)}
+                placeholder="Ask a question…"
+                onKeyDown={(e) => { if (e.key === "Enter") sendAskMessage(); }}
+              />
+              <button className="mp-primary-btn ai-test-btn" onClick={sendAskMessage} disabled={askSending}>Send</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showOnboarding && (
+        <div className="mp-overlay" style={{ zIndex: 90 }}>
+          <div className="mp-modal" style={{ maxWidth: 440 }}>
+            <div className="mp-display" style={{ fontSize: "1.3rem", fontWeight: 700, marginBottom: 10 }}>🍽️ Welcome!</div>
+            <div className="settings-desc" style={{ marginBottom: 16 }}>
+              This app can suggest meals and answer cooking questions using AI. It tries a local Ollama model first
+              (if you have one running), and falls back to Google Gemini's free API otherwise — handy on phones or
+              machines without Ollama.
+            </div>
+            <span className="mp-field-label">Add a free Gemini key to enable this everywhere</span>
+            <div className="ai-test-row" style={{ margin: "8px 0" }}>
+              <input
+                className="mp-input"
+                value={onboardingKeyInput}
+                onChange={(e) => setOnboardingKeyInput(e.target.value)}
+                placeholder="Paste your Gemini API key…"
+              />
+              <button className="mp-primary-btn ai-test-btn" onClick={saveKeyFromOnboarding}>Save</button>
+            </div>
+            <a className="settings-get-key-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
+              Get a free key at aistudio.google.com/apikey →
+            </a>
+            {onboardingStatusMsg && <div className="settings-status-msg">{onboardingStatusMsg}</div>}
+            <button className="settings-link-btn" style={{ marginTop: 16, display: "block" }} onClick={dismissOnboarding}>
+              Skip for now — I'll add this later in Settings
+            </button>
           </div>
         </div>
       )}
