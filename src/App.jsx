@@ -315,6 +315,7 @@ export default function App() {
   const [aiSuggestions, setAiSuggestions] = useState([]);
   const [aiSuggestLoading, setAiSuggestLoading] = useState(false);
   const [aiSuggestError, setAiSuggestError] = useState("");
+  const [cachedSuggestions, setCachedSuggestions] = useState([]);
 
   const [newMealName, setNewMealName] = useState("");
   const [newMealEmoji, setNewMealEmoji] = useState("🍽️");
@@ -360,7 +361,31 @@ export default function App() {
         setKeyEditing(true);
       }
     })();
+    // suggestion cache: load whatever was saved last time (instant), then
+    // quietly refresh it in the background so it's ready and current.
+    (async () => {
+      try {
+        const cached = await storage.get("suggestion-cache");
+        if (cached) setCachedSuggestions(JSON.parse(cached.value));
+      } catch {
+        // no cache yet — fine
+      }
+      refreshSuggestionCache();
+    })();
   }, []);
+
+  async function refreshSuggestionCache() {
+    try {
+      const raw = await askLLM(buildMealSuggestionPrompt("", "today"));
+      const parsed = parseMealSuggestions(raw);
+      if (parsed.length > 0) {
+        setCachedSuggestions(parsed);
+        storage.set("suggestion-cache", JSON.stringify(parsed)).catch(() => {});
+      }
+    } catch {
+      // background refresh is best-effort; the old cache (if any) stays usable
+    }
+  }
 
   const persistAssignments = async (next) => {
     try {
@@ -415,6 +440,7 @@ export default function App() {
       setKeyInputValue("");
       setKeyStatusMsg("Saved");
       setTimeout(() => setKeyStatusMsg(""), 2000);
+      refreshSuggestionCache();
     } catch (e) {
       setKeyStatusMsg(`⚠️ ${e?.message || e}`);
     }
@@ -566,6 +592,7 @@ export default function App() {
       setKeyEditing(false);
       setOnboardingKeyInput("");
       setShowOnboarding(false);
+      refreshSuggestionCache();
     } catch (e) {
       setOnboardingStatusMsg(`⚠️ ${e?.message || e}`);
     }
@@ -584,6 +611,21 @@ export default function App() {
       setAskMessages((prev) => [...prev, { role: "assistant", text: `⚠️ ${e?.message || e}` }]);
     }
     setAskSending(false);
+  }
+
+  // Called when the Add Meal panel opens: show cached ideas instantly if we
+  // have them (then refresh the cache in the background for next time);
+  // otherwise fall back to a live fetch.
+  function openSuggestionsPanel() {
+    setAiSuggestPrompt("");
+    setAiSuggestError("");
+    if (cachedSuggestions.length > 0) {
+      setAiSuggestions(cachedSuggestions);
+      refreshSuggestionCache();
+    } else {
+      setAiSuggestions([]);
+      generateMealSuggestions("");
+    }
   }
 
   async function generateMealSuggestions(promptOverride) {
@@ -907,10 +949,7 @@ export default function App() {
                     onClick={() => {
                       setActiveDayKey(key);
                       setModalTab("suggested");
-                      setAiSuggestPrompt("");
-                      setAiSuggestions([]);
-                      setAiSuggestError("");
-                      generateMealSuggestions("");
+                      openSuggestionsPanel();
                     }}
                   >
                     <Plus size={14} /> Add meal
@@ -941,10 +980,7 @@ export default function App() {
                     onClick={() => {
                       setActiveDayKey(key);
                       setModalTab("suggested");
-                      setAiSuggestPrompt("");
-                      setAiSuggestions([]);
-                      setAiSuggestError("");
-                      generateMealSuggestions("");
+                      openSuggestionsPanel();
                     }}
                   >
                     <div className="month-cell-date">{d.getDate()}</div>
