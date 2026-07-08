@@ -42,6 +42,7 @@ export default defineConfig({
     }),
   ],
   server: {
+    host: process.env.TAURI_DEV_HOST || false,
     watch: {
       ignored: ["**/src-tauri/**"],
     },
