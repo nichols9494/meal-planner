@@ -102,6 +102,73 @@ const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 // ---------- shopping list builder ----------
 
+// Converts a recipe amount into the smallest realistic store purchase.
+// Matches common ingredients by keyword; measurement units are normalized
+// to a base unit (cups for volume, oz for weight) before comparing against
+// typical package sizes. Returns a string like "1 half gallon" or null when
+// no sensible mapping exists (in which case the recipe amount is shown alone).
+const VOLUME_IN_CUPS = { cup: 1, cups: 1, tbsp: 1 / 16, tablespoon: 1 / 16, tablespoons: 1 / 16, tsp: 1 / 48, teaspoon: 1 / 48, teaspoons: 1 / 48, "fl oz": 1 / 8, floz: 1 / 8, pint: 2, pints: 2, quart: 4, quarts: 4, gallon: 16, gallons: 16, ml: 1 / 236.6, l: 4.227, liter: 4.227, liters: 4.227 };
+const WEIGHT_IN_OZ = { oz: 1, ounce: 1, ounces: 1, lb: 16, lbs: 16, pound: 16, pounds: 16, g: 0.0353, gram: 0.0353, grams: 0.0353, kg: 35.27 };
+
+const STORE_PACKAGES = [
+  { match: ["milk"], kind: "volume", packages: [{ size: 4, label: "quart" }, { size: 8, label: "half gallon" }, { size: 16, label: "gallon" }] },
+  { match: ["heavy cream", "whipping cream", "half and half", "half-and-half"], kind: "volume", packages: [{ size: 1, label: "half pint" }, { size: 2, label: "pint" }, { size: 4, label: "quart" }] },
+  { match: ["buttermilk"], kind: "volume", packages: [{ size: 4, label: "quart" }] },
+  { match: ["broth", "stock"], kind: "volume", packages: [{ size: 4, label: "32oz carton" }, { size: 8, label: "2 cartons (32oz)" }] },
+  { match: ["butter"], kind: "volume", packages: [{ size: 0.5, label: "stick" }, { size: 1, label: "half pound (2 sticks)" }, { size: 2, label: "1 lb box" }] },
+  { match: ["flour"], kind: "volume", packages: [{ size: 7.5, label: "2 lb bag" }, { size: 18, label: "5 lb bag" }] },
+  { match: ["sugar"], kind: "volume", packages: [{ size: 4.5, label: "2 lb bag" }, { size: 9, label: "4 lb bag" }] },
+  { match: ["rice"], kind: "volume", packages: [{ size: 2.5, label: "1 lb bag" }, { size: 5, label: "2 lb bag" }, { size: 12.5, label: "5 lb bag" }] },
+  { match: ["oats", "oatmeal"], kind: "volume", packages: [{ size: 5, label: "18oz canister" }, { size: 12, label: "42oz canister" }] },
+  { match: ["oil"], kind: "volume", packages: [{ size: 2, label: "16oz bottle" }, { size: 6, label: "48oz bottle" }] },
+  { match: ["soy sauce", "worcestershire", "vinegar"], kind: "volume", packages: [{ size: 1.25, label: "10oz bottle" }] },
+  { match: ["yogurt"], kind: "volume", packages: [{ size: 0.75, label: "6oz cup" }, { size: 4, label: "32oz tub" }] },
+  { match: ["sour cream"], kind: "volume", packages: [{ size: 1, label: "8oz tub" }, { size: 2, label: "16oz tub" }] },
+  { match: ["cheese"], kind: "volume", packages: [{ size: 2, label: "8oz bag/block" }, { size: 4, label: "16oz bag/block" }] },
+  { match: ["egg"], kind: "count", packages: [{ size: 12, label: "dozen" }, { size: 18, label: "18-count" }] },
+  { match: ["pasta", "spaghetti", "penne", "macaroni", "fettuccine", "rigatoni", "linguine"], kind: "weight", packages: [{ size: 16, label: "1 lb box" }] },
+  { match: ["ground beef", "ground turkey", "ground pork", "ground chicken"], kind: "weight", packages: [{ size: 16, label: "1 lb pack" }, { size: 32, label: "2 lb pack" }] },
+  { match: ["chicken breast", "chicken thigh", "chicken thighs"], kind: "weight", packages: [{ size: 16, label: "~1 lb pack" }, { size: 32, label: "~2 lb pack" }] },
+  { match: ["bacon"], kind: "count", unitHints: ["slice", "slices"], packages: [{ size: 12, label: "12oz pack (~12 slices)" }] },
+  { match: ["bread"], kind: "count", unitHints: ["slice", "slices"], packages: [{ size: 20, label: "loaf" }] },
+  { match: ["tortilla", "taco shell"], kind: "count", packages: [{ size: 8, label: "8-count pack" }, { size: 10, label: "10-count pack" }] },
+];
+
+function toBaseAmount(amount, unit, kind) {
+  const u = (unit || "").toLowerCase().trim();
+  if (kind === "volume") {
+    if (u in VOLUME_IN_CUPS) return amount * VOLUME_IN_CUPS[u];
+    return null;
+  }
+  if (kind === "weight") {
+    if (u in WEIGHT_IN_OZ) return amount * WEIGHT_IN_OZ[u];
+    return null;
+  }
+  if (kind === "count") {
+    if (!u || ["", "slice", "slices", "count", "large", "medium", "small"].includes(u)) return amount;
+    return null;
+  }
+  return null;
+}
+
+function storePurchaseFor(name, amount, unit) {
+  if (amount === null || amount === undefined || isNaN(amount) || amount <= 0) return null;
+  const lower = (name || "").toLowerCase();
+  for (const entry of STORE_PACKAGES) {
+    if (!entry.match.some((kw) => lower.includes(kw))) continue;
+    if (entry.unitHints && unit && !entry.unitHints.includes((unit || "").toLowerCase())) continue;
+    const base = toBaseAmount(amount, unit, entry.kind);
+    if (base === null) continue;
+    for (const pkg of entry.packages) {
+      if (pkg.size >= base) return `1 ${pkg.label}`;
+    }
+    const largest = entry.packages[entry.packages.length - 1];
+    const count = Math.ceil(base / largest.size);
+    return `${count}× ${largest.label}`;
+  }
+  return null;
+}
+
 function buildShoppingList(assignments, includeKeys) {
   const includeSet = new Set(includeKeys);
   const buckets = {};
@@ -178,11 +245,12 @@ Respond with ONLY a raw JSON array — no markdown, no code fences, no commentar
     "baseServings": integer, typically 4,
     "ingredients": [
       { "name": "string", "amount": number, "unit": "string such as cup, tbsp, lb, or empty string for whole items", "category": "produce" | "protein" | "dairy" | "grains" | "pantry" | "other", "price": number (estimated total USD cost for this ingredient at the given amount, rough US grocery average) }
-    ]
+    ],
+    "instructions": "numbered, step-by-step cooking instructions as plain text with line breaks between steps, e.g. '1. Do this.\\n2. Do that.'"
   }
 ]
 
-Return exactly 4 meals, each with 4-7 realistic ingredients. Output nothing except the JSON array itself.`;
+Return exactly 4 meals, each with 4-7 realistic ingredients and clear instructions. Output nothing except the JSON array itself.`;
 }
 
 function parseMealSuggestions(raw) {
@@ -209,6 +277,7 @@ function parseMealSuggestions(raw) {
             }))
             .filter((ing) => ing.name)
         : [],
+      instructions: m.instructions ? String(m.instructions).trim() : null,
     };
   });
 }
@@ -236,6 +305,9 @@ export default function App() {
   const [askSending, setAskSending] = useState(false);
 
   const [activeDayKey, setActiveDayKey] = useState(null);
+  const [detailMeal, setDetailMeal] = useState(null); // { dayKey, instanceId } of the meal being viewed
+  const [detailInstructionsLoading, setDetailInstructionsLoading] = useState(false);
+  const [detailInstructionsError, setDetailInstructionsError] = useState("");
   const [modalTab, setModalTab] = useState("suggested");
   const [showShoppingList, setShowShoppingList] = useState(false);
 
@@ -248,6 +320,7 @@ export default function App() {
   const [newMealEmoji, setNewMealEmoji] = useState("🍽️");
   const [newMealType, setNewMealType] = useState("dinner");
   const [newMealServings, setNewMealServings] = useState(4);
+  const [newMealInstructionsInput, setNewMealInstructionsInput] = useState("");
   const [newMealIngredients, setNewMealIngredients] = useState([emptyIngredientRow()]);
 
   const today = new Date();
@@ -366,6 +439,7 @@ export default function App() {
       ingredients: meal.ingredients,
       baseServings: meal.baseServings || 4,
       servings: meal.baseServings || 4,
+      instructions: meal.instructions || null,
       instanceId: makeInstanceId(),
     };
     setAssignments((prev) => {
@@ -418,6 +492,7 @@ export default function App() {
     setNewMealEmoji("🍽️");
     setNewMealType("dinner");
     setNewMealServings(4);
+    setNewMealInstructionsInput("");
     setNewMealIngredients([emptyIngredientRow()]);
   }
 
@@ -440,7 +515,15 @@ export default function App() {
         category: CATEGORY_ORDER.includes(row.category) ? row.category : "other",
       }));
     if (!name || ingredients.length === 0) return;
-    const meal = { id: makeCustomMealId(), name, emoji: newMealEmoji, mealType: newMealType, baseServings: newMealServings || 4, ingredients };
+    const meal = {
+      id: makeCustomMealId(),
+      name,
+      emoji: newMealEmoji,
+      mealType: newMealType,
+      baseServings: newMealServings || 4,
+      ingredients,
+      instructions: newMealInstructionsInput.trim() || null,
+    };
     setCustomMeals((prev) => {
       const next = [...prev, meal];
       persistCustomMeals(next);
@@ -459,6 +542,12 @@ export default function App() {
     0
   );
   const activeDayMeals = activeDayKey ? assignments[activeDayKey] || [] : [];
+  const detailMealData = detailMeal
+    ? (assignments[detailMeal.dayKey] || []).find((m) => m.instanceId === detailMeal.instanceId) || null
+    : null;
+  const detailMealDayLabel = detailMeal
+    ? new Date(detailMeal.dayKey + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
+    : "";
   const activeDayLabel = activeDayKey
     ? new Date(activeDayKey + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
     : "";
@@ -497,18 +586,48 @@ export default function App() {
     setAskSending(false);
   }
 
-  async function generateMealSuggestions() {
+  async function generateMealSuggestions(promptOverride) {
+    const effectivePrompt = promptOverride !== undefined ? promptOverride : aiSuggestPrompt;
     setAiSuggestLoading(true);
     setAiSuggestError("");
     setAiSuggestions([]);
     try {
-      const raw = await askLLM(buildMealSuggestionPrompt(aiSuggestPrompt, activeDayLabel || "today"));
+      const raw = await askLLM(buildMealSuggestionPrompt(effectivePrompt, activeDayLabel || "today"));
       const parsed = parseMealSuggestions(raw);
       setAiSuggestions(parsed);
     } catch (e) {
       setAiSuggestError(`Couldn't generate suggestions: ${e?.message || e}`);
     }
     setAiSuggestLoading(false);
+  }
+
+  async function fetchInstructionsForDetail() {
+    if (!detailMeal || !detailMealData || detailInstructionsLoading) return;
+    setDetailInstructionsLoading(true);
+    try {
+      const ingList = (detailMealData.ingredients || [])
+        .map((ing) => `${ing.amount ?? ""} ${ing.unit || ""} ${ing.name}`.trim())
+        .join(", ");
+      const raw = await askLLM(
+        `Write numbered, step-by-step cooking instructions for "${detailMealData.name}" (serves ${detailMealData.baseServings || 4}) using these ingredients: ${ingList}. Respond with ONLY the numbered steps as plain text, one step per line. No introduction, no commentary.`
+      );
+      const instructions = (raw || "").trim();
+      if (instructions) {
+        setAssignments((prev) => {
+          const next = {
+            ...prev,
+            [detailMeal.dayKey]: (prev[detailMeal.dayKey] || []).map((m) =>
+              m.instanceId === detailMeal.instanceId ? { ...m, instructions } : m
+            ),
+          };
+          persistAssignments(next);
+          return next;
+        });
+      }
+    } catch (e) {
+      setDetailInstructionsError(`Couldn't generate instructions: ${e?.message || e}`);
+    }
+    setDetailInstructionsLoading(false);
   }
 
   function saveSuggestionToMyMeals(meal) {
@@ -519,6 +638,7 @@ export default function App() {
       mealType: meal.mealType,
       baseServings: meal.baseServings,
       ingredients: meal.ingredients,
+      instructions: meal.instructions || null,
     };
     setCustomMeals((prev) => {
       const next = [...prev, toSave];
@@ -661,6 +781,14 @@ export default function App() {
         .receipt-dots { flex:1; border-bottom:1px dotted rgba(255,255,255,0.3); margin-bottom:4px; min-width:8px; }
         .receipt-line.done .receipt-name, .receipt-line.done .receipt-qty { text-decoration:line-through; opacity:0.4; }
         .receipt-price-line { display:flex; justify-content:flex-end; gap:10px; font-family:'Space Mono',monospace; font-size:0.72rem; color:var(--text-dim); padding-bottom:6px; }
+        .receipt-buy-as { margin-right:auto; color:var(--cyan); }
+        .meal-name-link { cursor:pointer; }
+        .meal-name-link:hover { color:var(--cyan); text-decoration:underline; }
+        .detail-section-title { font-family:'Space Mono',monospace; text-transform:uppercase; letter-spacing:0.08em; font-size:0.7rem; color:var(--cyan); text-shadow: 0 0 8px rgba(45,226,230,0.5); border-bottom:1px dashed rgba(255,255,255,0.18); padding-bottom:4px; margin-bottom:8px; }
+        .detail-ing-row { display:flex; align-items:baseline; gap:6px; padding:3px 0; font-family:'Space Mono',monospace; font-size:0.84rem; }
+        .detail-ing-name { }
+        .detail-ing-qty { color:var(--text-dim); }
+        .detail-instructions { font-size:0.88rem; line-height:1.7; white-space:pre-wrap; color:var(--text); }
         .receipt-line-total { color: var(--sun-mid); font-weight:700; }
         .receipt-footer { padding:10px 22px 22px; border-top: 1px solid rgba(255,255,255,0.1); }
         .barcode { display:flex; align-items:flex-end; gap:2px; height:28px; margin-top:6px; }
@@ -755,7 +883,13 @@ export default function App() {
                         <div className="meal-chip-top">
                           <span className="meal-dot" style={{ background: (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).color, color: (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).color }} />
                           <span style={{ fontSize: "1rem" }}>{m.emoji}</span>
-                          <span className="meal-name">{m.name}</span>
+                          <span
+                            className="meal-name meal-name-link"
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => setDetailMeal({ dayKey: key, instanceId: m.instanceId })}
+                            onKeyDown={(e) => { if (e.key === "Enter") setDetailMeal({ dayKey: key, instanceId: m.instanceId }); }}
+                          >{m.name}</span>
                           <button className="meal-remove" onClick={() => removeMealFromDay(key, m.instanceId)} aria-label="Remove meal">
                             <X size={14} />
                           </button>
@@ -776,6 +910,7 @@ export default function App() {
                       setAiSuggestPrompt("");
                       setAiSuggestions([]);
                       setAiSuggestError("");
+                      generateMealSuggestions("");
                     }}
                   >
                     <Plus size={14} /> Add meal
@@ -809,6 +944,7 @@ export default function App() {
                       setAiSuggestPrompt("");
                       setAiSuggestions([]);
                       setAiSuggestError("");
+                      generateMealSuggestions("");
                     }}
                   >
                     <div className="month-cell-date">{d.getDate()}</div>
@@ -848,7 +984,13 @@ export default function App() {
                     <div className="meal-chip-top">
                       <span className="meal-dot" style={{ background: (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).color, color: (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).color }} />
                       <span style={{ fontSize: "1rem" }}>{m.emoji}</span>
-                      <span className="meal-name">{m.name}</span>
+                      <span
+                        className="meal-name meal-name-link"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => setDetailMeal({ dayKey: activeDayKey, instanceId: m.instanceId })}
+                        onKeyDown={(e) => { if (e.key === "Enter") setDetailMeal({ dayKey: activeDayKey, instanceId: m.instanceId }); }}
+                      >{m.name}</span>
                       <button className="meal-remove" onClick={() => removeMealFromDay(activeDayKey, m.instanceId)} aria-label="Remove meal">
                         <X size={14} />
                       </button>
@@ -987,6 +1129,16 @@ export default function App() {
                 <button className="mp-add-ing" onClick={() => setNewMealIngredients((prev) => [...prev, emptyIngredientRow()])}>
                   <Plus size={14} /> Add ingredient
                 </button>
+
+                <span className="mp-field-label">Cooking instructions (optional)</span>
+                <textarea
+                  className="mp-input"
+                  style={{ marginBottom: 14, minHeight: 90, resize: "vertical", fontFamily: "inherit" }}
+                  placeholder="1. Preheat oven to 400°F...&#10;2. ..."
+                  value={newMealInstructionsInput}
+                  onChange={(e) => setNewMealInstructionsInput(e.target.value)}
+                />
+
                 <button className="mp-primary-btn" onClick={submitNewMeal}>
                   <Sparkles size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />
                   Save & add to day
@@ -1024,6 +1176,7 @@ export default function App() {
                       const itemKey = `${cat.category}|${item.name.toLowerCase()}|${item.unit.toLowerCase()}`;
                       const isChecked = checked.has(itemKey);
                       const avgUnitPrice = item.amount && item.amount > 0 && item.priceCount > 0 ? item.priceSum / item.amount : null;
+                      const buyAs = storePurchaseFor(item.name, item.amount, item.unit);
                       return (
                         <div key={itemKey}>
                           <div className={`receipt-line${isChecked ? " done" : ""}`} onClick={() => toggleChecked(itemKey)}>
@@ -1033,6 +1186,7 @@ export default function App() {
                             <span className="receipt-qty">{item.amount !== null ? `${formatAmount(item.amount)}${item.unit ? " " + item.unit : ""}` : (item.unit || "—")}</span>
                           </div>
                           <div className="receipt-price-line">
+                            {buyAs && <span className="receipt-buy-as">buy: {buyAs}</span>}
                             {avgUnitPrice !== null && <span>avg ${avgUnitPrice.toFixed(2)}/{item.unit || "ea"}</span>}
                             <span className="receipt-line-total">{item.priceCount > 0 ? `$${item.priceSum.toFixed(2)}` : "—"}</span>
                           </div>
@@ -1101,6 +1255,56 @@ export default function App() {
               )}
               {keyStatusMsg && <div className="settings-status-msg">{keyStatusMsg}</div>}
             </div>
+          </div>
+        </div>
+      )}
+
+      {detailMeal && detailMealData && (
+        <div className="mp-overlay" onClick={() => { setDetailMeal(null); setDetailInstructionsError(""); }}>
+          <div className="mp-modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+            <div className="mp-modal-head">
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: "1.8rem" }}>{detailMealData.emoji}</span>
+                <div>
+                  <div className="mp-display" style={{ fontSize: "1.2rem", fontWeight: 700 }}>{detailMealData.name}</div>
+                  <div className="mp-mono" style={{ fontSize: "0.7rem", opacity: 0.7, marginTop: 2 }}>
+                    {detailMealDayLabel} · {(MEAL_TYPE_META[detailMealData.mealType] || MEAL_TYPE_META.dinner).label} · {detailMealData.servings || detailMealData.baseServings || 4} servings
+                  </div>
+                </div>
+              </div>
+              <button className="mp-close-btn" onClick={() => { setDetailMeal(null); setDetailInstructionsError(""); }}><X size={16} /></button>
+            </div>
+
+            <div className="detail-section-title">Ingredients</div>
+            <div className="detail-ingredients">
+              {(detailMealData.ingredients || []).map((ing, i) => {
+                const scale = detailMealData.baseServings ? (detailMealData.servings || detailMealData.baseServings) / detailMealData.baseServings : 1;
+                const scaledAmount = ing.amount !== null && ing.amount !== undefined && !isNaN(Number(ing.amount)) ? Number(ing.amount) * scale : null;
+                return (
+                  <div className="detail-ing-row" key={i}>
+                    <span className="detail-ing-name">{ing.name}</span>
+                    <span className="receipt-dots" />
+                    <span className="detail-ing-qty">{scaledAmount !== null ? `${formatAmount(scaledAmount)}${ing.unit ? " " + ing.unit : ""}` : (ing.unit || "—")}</span>
+                  </div>
+                );
+              })}
+              {(detailMealData.ingredients || []).length === 0 && <div className="mp-empty">No ingredients recorded for this meal.</div>}
+            </div>
+
+            <div className="detail-section-title" style={{ marginTop: 16 }}>Instructions</div>
+            {detailMealData.instructions ? (
+              <div className="detail-instructions">{detailMealData.instructions}</div>
+            ) : (
+              <div>
+                <div className="settings-desc" style={{ marginBottom: 10 }}>
+                  This meal doesn't have instructions saved yet.
+                </div>
+                {detailInstructionsError && <div className="mp-warning" style={{ margin: "0 0 10px" }}>{detailInstructionsError}</div>}
+                <button className="mp-primary-btn" onClick={fetchInstructionsForDetail} disabled={detailInstructionsLoading}>
+                  {detailInstructionsLoading ? "Generating…" : "✨ Generate instructions with AI"}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
