@@ -18,6 +18,14 @@ import {
 } from "lucide-react";
 import { storage } from "./storage";
 import { askLLM, saveApiKey, hasApiKey, clearApiKey } from "./llm";
+import {
+  STARTUP_RANDOM_PROMPT,
+  seedDefaultRecipes,
+  getAllStoredRecipes,
+  getRecipesForPrompt,
+  saveGeneratedRecipes,
+  cloneCachedRecipes,
+} from "./recipeCache";
 
 const GEMINI_API_KEY_URL = "https://aistudio.google.com/apikey";
 
@@ -544,7 +552,7 @@ function buildMealSuggestionPrompt(userPrompt, dayLabel) {
     userPrompt && userPrompt.trim()
       ? userPrompt.trim()
       : "any tasty, well-rounded meal";
-  return `You are a meal-planning assistant. Suggest 4 distinct meal ideas for ${dayLabel}, based on this request: "${want}".
+  return `You are a meal-planning assistant. Suggest 5 distinct meal ideas for ${dayLabel}, based on this request: "${want}".
 
 Respond with ONLY a raw JSON array — no markdown, no code fences, no commentary before or after — matching exactly this shape:
 [
@@ -568,7 +576,7 @@ Respond with ONLY a raw JSON array — no markdown, no code fences, no commentar
   }
 ]
 
-Return exactly 4 meals, each with 4-7 realistic ingredients and clear instructions. purchasePrice must be the full package price a store charges (a bottle of olive oil is ~$5-9, a dozen eggs ~$3-5), NOT the cost of the tiny amount the recipe uses. Output nothing except the JSON array itself.`;
+Return exactly 5 meals, each with 4-7 realistic ingredients and clear instructions. purchasePrice must be the full package price a store charges (a bottle of olive oil is ~$5-9, a dozen eggs ~$3-5), NOT the cost of the tiny amount the recipe uses. Output nothing except the JSON array itself.`;
 }
 
 function parseMealSuggestions(raw) {
@@ -666,6 +674,8 @@ function parseMealSuggestions(raw) {
   });
 }
 
+let startupRecipeSeedStarted = false;
+
 export default function App() {
   const [cursorDate, setCursorDate] = useState(() => new Date());
   const [viewMode, setViewMode] = useState("week"); // "week" | "month"
@@ -700,8 +710,8 @@ export default function App() {
   const [aiSuggestPrompt, setAiSuggestPrompt] = useState("");
   const [aiSuggestions, setAiSuggestions] = useState([]);
   const [aiSuggestLoading, setAiSuggestLoading] = useState(false);
+  const [aiSuggestLoadingMessage, setAiSuggestLoadingMessage] = useState("");
   const [aiSuggestError, setAiSuggestError] = useState("");
-  const [cachedSuggestions, setCachedSuggestions] = useState([]);
 
   const [newMealName, setNewMealName] = useState("");
   const [newMealEmoji, setNewMealEmoji] = useState("🍽️");
@@ -749,31 +759,11 @@ export default function App() {
         setKeyEditing(true);
       }
     })();
-    // suggestion cache: load whatever was saved last time (instant), then
-    // quietly refresh it in the background so it's ready and current.
-    (async () => {
-      try {
-        const cached = await storage.get("suggestion-cache");
-        if (cached) setCachedSuggestions(JSON.parse(cached.value));
-      } catch {
-        // no cache yet — fine
-      }
-      refreshSuggestionCache();
-    })();
+
+    seedStartupRecipeSuggestions();
   }, []);
 
-  async function refreshSuggestionCache() {
-    try {
-      const raw = await askLLM(buildMealSuggestionPrompt("", "today"));
-      const parsed = parseMealSuggestions(raw);
-      if (parsed.length > 0) {
-        setCachedSuggestions(parsed);
-        storage.set("suggestion-cache", JSON.stringify(parsed)).catch(() => {});
-      }
-    } catch {
-      // background refresh is best-effort; the old cache (if any) stays usable
-    }
-  }
+
 
   const persistAssignments = async (next) => {
     try {
@@ -838,7 +828,7 @@ export default function App() {
       setKeyInputValue("");
       setKeyStatusMsg("Saved");
       setTimeout(() => setKeyStatusMsg(""), 2000);
-      refreshSuggestionCache();
+      
     } catch (e) {
       setKeyStatusMsg(`⚠️ ${e?.message || e}`);
     }
@@ -1023,7 +1013,7 @@ export default function App() {
       setKeyEditing(false);
       setOnboardingKeyInput("");
       setShowOnboarding(false);
-      refreshSuggestionCache();
+      
     } catch (e) {
       setOnboardingStatusMsg(`⚠️ ${e?.message || e}`);
     }
@@ -1047,37 +1037,117 @@ export default function App() {
     setAskSending(false);
   }
 
-  // Called when the Add Meal panel opens: show cached ideas instantly if we
-  // have them (then refresh the cache in the background for next time);
-  // otherwise fall back to a live fetch.
-  function openSuggestionsPanel() {
+  async function seedStartupRecipeSuggestions() {
+    if (startupRecipeSeedStarted) {
+      return;
+    }
+
+    startupRecipeSeedStarted = true;
+    setAiSuggestError("");
+    setAiSuggestLoading(true);
+    setAiSuggestLoadingMessage("Loading saved meal ideas…");
+
+    try {
+      await seedDefaultRecipes();
+
+      const storedRecipes = await getAllStoredRecipes();
+
+      if (storedRecipes.length > 0) {
+        setAiSuggestions(cloneCachedRecipes(storedRecipes));
+      }
+
+      setAiSuggestLoadingMessage("Generating 5 new meal ideas…");
+
+      const existingNames = storedRecipes
+        .map((meal) => meal.name)
+        .filter(Boolean)
+        .slice(0, 100)
+        .join(", ");
+
+      const randomPrompt = existingNames
+        ? `Generate exactly 5 new random meal ideas that are different from these recipes already stored in my app: ${existingNames}. Avoid duplicate or nearly identical meals.`
+        : "Generate exactly 5 random meal ideas for my meal planner app.";
+
+      const raw = await askLLM(
+        buildMealSuggestionPrompt(randomPrompt, activeDayLabel || "today"),
+      );
+
+      const parsed = parseMealSuggestions(raw).slice(0, 5);
+
+      if (parsed.length > 0) {
+        await saveGeneratedRecipes(
+          STARTUP_RANDOM_PROMPT,
+          parsed,
+          activeDayLabel || "today",
+        );
+
+        const updatedRecipes = await getAllStoredRecipes();
+        setAiSuggestions(cloneCachedRecipes(updatedRecipes));
+      }
+    } catch {
+      const storedRecipes = await getAllStoredRecipes();
+      setAiSuggestions(cloneCachedRecipes(storedRecipes));
+    }
+
+    setAiSuggestLoading(false);
+    setAiSuggestLoadingMessage("");
+  }
+
+  // Called when the Add Meal panel opens: show all stored AI recipes instantly.
+  async function openSuggestionsPanel() {
     setAiSuggestPrompt("");
     setAiSuggestError("");
-    if (cachedSuggestions.length > 0) {
-      setAiSuggestions(cachedSuggestions);
-      refreshSuggestionCache();
+
+    await seedDefaultRecipes();
+    const storedRecipes = await getAllStoredRecipes();
+
+    if (storedRecipes.length > 0) {
+      setAiSuggestions(cloneCachedRecipes(storedRecipes));
     } else {
       setAiSuggestions([]);
-      generateMealSuggestions("");
     }
   }
 
   async function generateMealSuggestions(promptOverride) {
     const effectivePrompt =
       promptOverride !== undefined ? promptOverride : aiSuggestPrompt;
+
     setAiSuggestLoading(true);
+    setAiSuggestLoadingMessage("Checking saved meal ideas…");
     setAiSuggestError("");
-    setAiSuggestions([]);
+
     try {
+      const storedPromptRecipes = await getRecipesForPrompt(effectivePrompt);
+
+      if (storedPromptRecipes.length > 0) {
+        setAiSuggestions(cloneCachedRecipes(storedPromptRecipes));
+        setAiSuggestLoading(false);
+        setAiSuggestLoadingMessage("");
+        return;
+      }
+
+      setAiSuggestions([]);
+      setAiSuggestLoadingMessage("Generating new meal ideas…");
+
       const raw = await askLLM(
         buildMealSuggestionPrompt(effectivePrompt, activeDayLabel || "today"),
       );
-      const parsed = parseMealSuggestions(raw);
-      setAiSuggestions(parsed);
+
+      const parsed = parseMealSuggestions(raw).slice(0, 5);
+
+      const savedPromptRecipes = await saveGeneratedRecipes(
+        effectivePrompt,
+        parsed,
+        activeDayLabel || "today",
+      );
+
+      setAiSuggestions(cloneCachedRecipes(savedPromptRecipes));
     } catch (e) {
       setAiSuggestError(`Couldn't generate suggestions: ${e?.message || e}`);
     }
+
     setAiSuggestLoading(false);
+    setAiSuggestLoadingMessage("");
   }
 
   async function fetchInstructionsForDetail() {
@@ -1288,6 +1358,8 @@ export default function App() {
         .mp-warning { max-width:1100px; margin:0 auto 16px; background:rgba(255,47,120,0.15); border:1px solid var(--magenta); color:var(--text); padding:10px 14px; border-radius:10px; font-size:0.85rem; }
         .ai-test-row { display:flex; gap:8px; align-items:center; }
         .ai-test-btn { width:auto; flex-shrink:0; padding:10px 20px; }
+        .ai-generating-row { display:flex; align-items:center; justify-content:center; gap:8px; min-height:44px; margin: 6px 0 14px; color:var(--cyan); font-size:0.82rem; font-family:'Space Mono',monospace; background:rgba(45,226,230,0.08); border:1px solid rgba(45,226,230,0.22); border-radius:10px; }
+        .ai-status-pill { display:flex; align-items:center; gap:7px; color:var(--cyan); border:1px solid rgba(45,226,230,0.24); background:rgba(45,226,230,0.08); border-radius:999px; padding:7px 10px; font-size:0.72rem; font-family:'Space Mono',monospace; }
         .settings-section { padding-top:4px; }
         .settings-section-title { display:flex; align-items:center; gap:6px; font-size:0.85rem; font-weight:600; margin-bottom:8px; color:var(--text); }
         .settings-desc { font-size:0.8rem; color:var(--text-dim); line-height:1.5; margin-bottom:14px; }
@@ -1371,6 +1443,15 @@ export default function App() {
             >
               <Settings size={16} />
             </button>
+            {aiSuggestLoading && (
+              <div className="ai-status-pill">
+                <Loader2
+                  size={14}
+                  style={{ animation: "spin 1s linear infinite" }}
+                />
+                <span>{aiSuggestLoadingMessage || "Generating meals…"}</span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -1718,14 +1799,17 @@ export default function App() {
                   </div>
                 )}
                 {aiSuggestLoading && (
-                  <div className="mp-loading" style={{ minHeight: 100 }}>
+                  <div className="ai-generating-row">
                     <Loader2
-                      size={24}
+                      size={18}
                       style={{ animation: "spin 1s linear infinite" }}
                     />
+                    <span>
+                      {aiSuggestLoadingMessage || "Generating meal ideas…"}
+                    </span>
                   </div>
                 )}
-                {!aiSuggestLoading && aiSuggestions.length > 0 && (
+                {aiSuggestions.length > 0 && (
                   <div className="suggested-grid">
                     {aiSuggestions.map((m) => (
                       <div
