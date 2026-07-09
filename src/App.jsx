@@ -198,6 +198,9 @@ function buildShoppingList(assignments, includeKeys) {
             amount: amountNum,
             priceSum: priceNum !== null ? priceNum : 0,
             priceCount: priceNum !== null ? 1 : 0,
+            purchaseItem: ing.purchaseItem || null,
+            purchaseAmount: ing.purchaseAmount || null,
+            purchasePrice: ing.purchasePrice ?? null,
           };
         } else {
           const existing = buckets[category][key];
@@ -206,13 +209,37 @@ function buildShoppingList(assignments, includeKeys) {
             existing.priceSum += priceNum;
             existing.priceCount += 1;
           }
+          // keep the first purchase info seen; fill in if this one has it and the existing doesn't
+          if (!existing.purchaseItem && ing.purchaseItem) {
+            existing.purchaseItem = ing.purchaseItem;
+            existing.purchaseAmount = ing.purchaseAmount || null;
+            existing.purchasePrice = ing.purchasePrice ?? null;
+          }
         }
       });
     });
   });
   return CATEGORY_ORDER.filter((c) => buckets[c]).map((c) => {
-    const items = Object.values(buckets[c]).sort((a, b) => a.name.localeCompare(b.name));
-    const categoryTotal = items.reduce((s, it) => s + (it.priceCount > 0 ? it.priceSum : 0), 0);
+    const items = Object.values(buckets[c])
+      .map((it) => {
+        // Work out how many store packages cover the needed amount.
+        let packagesNeeded = null;
+        if (it.purchaseItem) {
+          if (it.purchaseAmount && it.amount !== null) {
+            packagesNeeded = Math.max(1, Math.ceil(it.amount / it.purchaseAmount));
+          } else {
+            packagesNeeded = 1;
+          }
+        }
+        const purchaseCost =
+          packagesNeeded !== null && it.purchasePrice !== null ? packagesNeeded * it.purchasePrice : null;
+        return { ...it, packagesNeeded, purchaseCost };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const categoryTotal = items.reduce(
+      (s, it) => s + (it.purchaseCost !== null ? it.purchaseCost : it.priceCount > 0 ? it.priceSum : 0),
+      0
+    );
     return { category: c, items, categoryTotal };
   });
 }
@@ -244,13 +271,21 @@ Respond with ONLY a raw JSON array — no markdown, no code fences, no commentar
     "mealType": "breakfast" | "lunch" | "dinner" | "snack",
     "baseServings": integer, typically 4,
     "ingredients": [
-      { "name": "string", "amount": number, "unit": "string such as cup, tbsp, lb, or empty string for whole items", "category": "produce" | "protein" | "dairy" | "grains" | "pantry" | "other", "price": number (estimated total USD cost for this ingredient at the given amount, rough US grocery average) }
+      {
+        "name": "string",
+        "amount": number (quantity needed by the recipe),
+        "unit": "string such as cup, tbsp, lb, or empty string for whole items",
+        "category": "produce" | "protein" | "dairy" | "grains" | "pantry" | "other",
+        "purchaseItem": "string, the smallest package a typical US grocery store sells, e.g. '8.5 fl oz bottle of olive oil' or 'dozen large eggs'",
+        "purchaseAmount": number (how much of the recipe's unit that ONE package contains, e.g. an 8.5 fl oz bottle of olive oil = 17 tbsp, so if unit is tbsp, purchaseAmount is 17),
+        "purchasePrice": number (realistic current US price in dollars for that ONE package, e.g. 5.79 — use real-world grocery store prices, never per-recipe-amount fractions)
+      }
     ],
     "instructions": "numbered, step-by-step cooking instructions as plain text with line breaks between steps, e.g. '1. Do this.\\n2. Do that.'"
   }
 ]
 
-Return exactly 4 meals, each with 4-7 realistic ingredients and clear instructions. Output nothing except the JSON array itself.`;
+Return exactly 4 meals, each with 4-7 realistic ingredients and clear instructions. purchasePrice must be the full package price a store charges (a bottle of olive oil is ~$5-9, a dozen eggs ~$3-5), NOT the cost of the tiny amount the recipe uses. Output nothing except the JSON array itself.`;
 }
 
 function parseMealSuggestions(raw) {
@@ -274,6 +309,9 @@ function parseMealSuggestions(raw) {
               unit: String(ing.unit || "").trim(),
               category: CATEGORY_ORDER.includes(ing.category) ? ing.category : "other",
               price: ing.price === undefined || ing.price === null || isNaN(Number(ing.price)) ? null : Number(ing.price),
+              purchaseItem: ing.purchaseItem ? String(ing.purchaseItem).trim() : null,
+              purchaseAmount: ing.purchaseAmount === undefined || ing.purchaseAmount === null || isNaN(Number(ing.purchaseAmount)) || Number(ing.purchaseAmount) <= 0 ? null : Number(ing.purchaseAmount),
+              purchasePrice: ing.purchasePrice === undefined || ing.purchasePrice === null || isNaN(Number(ing.purchasePrice)) ? null : Number(ing.purchasePrice),
             }))
             .filter((ing) => ing.name)
         : [],
@@ -305,6 +343,7 @@ export default function App() {
   const [askSending, setAskSending] = useState(false);
 
   const [activeDayKey, setActiveDayKey] = useState(null);
+  const [previewMeal, setPreviewMeal] = useState(null); // suggestion/My Meal being previewed before adding
   const [detailMeal, setDetailMeal] = useState(null); // { dayKey, instanceId } of the meal being viewed
   const [detailInstructionsLoading, setDetailInstructionsLoading] = useState(false);
   const [detailInstructionsError, setDetailInstructionsError] = useState("");
@@ -564,7 +603,7 @@ export default function App() {
   const totalItems = shoppingList.reduce((sum, cat) => sum + cat.items.length, 0);
   const grandTotal = shoppingList.reduce((sum, cat) => sum + cat.categoryTotal, 0);
   const itemsWithoutPrice = shoppingList.reduce(
-    (sum, cat) => sum + cat.items.filter((it) => it.priceCount === 0).length,
+    (sum, cat) => sum + cat.items.filter((it) => it.purchaseCost === null && it.priceCount === 0).length,
     0
   );
   const activeDayMeals = activeDayKey ? assignments[activeDayKey] || [] : [];
@@ -712,7 +751,7 @@ export default function App() {
           background: linear-gradient(180deg, #0a0512 0%, #150a26 45%, #0a0512 100%);
           color: var(--text);
           min-height: 100vh;
-          padding: 28px 20px 100px;
+          padding: calc(28px + env(safe-area-inset-top, 0px)) calc(20px + env(safe-area-inset-right, 0px)) calc(100px + env(safe-area-inset-bottom, 0px)) calc(20px + env(safe-area-inset-left, 0px));
           box-sizing: border-box;
         }
         .mp-body { font-family: 'Space Grotesk', sans-serif; }
@@ -805,13 +844,15 @@ export default function App() {
         .mp-add-ing { background:none; border:1.5px dashed rgba(255,255,255,0.2); border-radius:8px; padding:8px; width:100%; cursor:pointer; font-size:0.82rem; color:var(--text-dim); display:flex; align-items:center; justify-content:center; gap:6px; margin-bottom:16px; }
         .mp-add-ing:hover { border-color: var(--cyan); color: var(--text); }
         .mp-primary-btn { background:linear-gradient(90deg, var(--magenta), var(--violet)); color:#fff; border:none; border-radius:10px; padding:10px 18px; font-size:0.9rem; font-weight:600; cursor:pointer; width:100%; box-shadow: 0 0 16px rgba(255,47,120,0.35); }
+        .mp-secondary-btn { background:rgba(255,255,255,0.08); color:var(--text); border:1px solid rgba(255,255,255,0.18); border-radius:10px; padding:10px 18px; font-size:0.9rem; font-weight:600; cursor:pointer; }
+        .mp-secondary-btn:hover { background:rgba(255,255,255,0.14); }
         .mp-primary-btn:hover { filter: brightness(1.1); }
 
-        .fab { position:fixed; bottom:22px; right:22px; background:linear-gradient(90deg, var(--magenta), var(--violet)); color:#fff; border:none; border-radius:999px; padding:14px 20px; display:flex; align-items:center; gap:8px; box-shadow:0 0 24px rgba(255,47,120,0.45); cursor:pointer; font-weight:600; font-size:0.9rem; z-index:45; }
+        .fab { position:fixed; bottom:calc(22px + env(safe-area-inset-bottom, 0px)); right:calc(22px + env(safe-area-inset-right, 0px)); background:linear-gradient(90deg, var(--magenta), var(--violet)); color:#fff; border:none; border-radius:999px; padding:14px 20px; display:flex; align-items:center; gap:8px; box-shadow:0 0 24px rgba(255,47,120,0.45); cursor:pointer; font-weight:600; font-size:0.9rem; z-index:45; }
         .fab:hover { filter: brightness(1.1); }
         .fab-badge { background:#fff; color:var(--magenta); border-radius:999px; padding:1px 8px; font-size:0.75rem; font-weight:700; }
 
-        .receipt-panel { position:fixed; top:0; right:0; height:100vh; width:100%; max-width:400px; background: linear-gradient(180deg, var(--night-mid), var(--night)); color:var(--text); box-shadow:-10px 0 30px rgba(0,0,0,0.5); z-index:70; display:flex; flex-direction:column; border-left: 1px solid var(--border-glow); }
+        .receipt-panel { position:fixed; top:0; right:0; height:100vh; padding-top:env(safe-area-inset-top, 0px); width:100%; max-width:400px; background: linear-gradient(180deg, var(--night-mid), var(--night)); color:var(--text); box-shadow:-10px 0 30px rgba(0,0,0,0.5); z-index:70; display:flex; flex-direction:column; border-left: 1px solid var(--border-glow); }
         .receipt-header { padding:20px 22px 14px; display:flex; align-items:flex-start; justify-content:space-between; border-bottom: 1px solid rgba(255,255,255,0.1); }
         .receipt-disclaimer { font-size:0.72rem; color:var(--text-dim); padding: 10px 22px 0; }
         .receipt-content { flex:1; overflow-y:auto; padding:12px 22px 10px; background-image: repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0 2px, transparent 2px 4px); }
@@ -854,7 +895,7 @@ export default function App() {
         .settings-get-key-link { font-size:0.78rem; color:var(--cyan); text-decoration:none; }
         .settings-get-key-link:hover { text-decoration:underline; }
         .settings-status-msg { margin-top:8px; font-size:0.78rem; color:var(--text-dim); font-family:'Space Mono',monospace; }
-        .ask-panel { position:fixed; top:0; right:0; height:100vh; width:100%; max-width:400px; background: linear-gradient(180deg, var(--night-mid), var(--night)); color:var(--text); box-shadow:-10px 0 30px rgba(0,0,0,0.5); z-index:70; display:flex; flex-direction:column; border-left: 1px solid var(--border-glow); }
+        .ask-panel { position:fixed; top:0; right:0; height:100vh; padding-top:env(safe-area-inset-top, 0px); width:100%; max-width:400px; background: linear-gradient(180deg, var(--night-mid), var(--night)); color:var(--text); box-shadow:-10px 0 30px rgba(0,0,0,0.5); z-index:70; display:flex; flex-direction:column; border-left: 1px solid var(--border-glow); }
         .ask-messages { flex:1; overflow-y:auto; padding:16px 20px; display:flex; flex-direction:column; gap:10px; }
         .ask-msg { max-width:85%; padding:10px 12px; border-radius:12px; font-size:0.85rem; line-height:1.5; white-space:pre-wrap; }
         .ask-msg-user { align-self:flex-end; background:linear-gradient(90deg, var(--magenta), var(--violet)); color:#fff; }
@@ -1081,8 +1122,8 @@ export default function App() {
                         role="button"
                         tabIndex={0}
                         key={m.id}
-                        onClick={() => addMealToDay(activeDayKey, m)}
-                        onKeyDown={(e) => { if (e.key === "Enter") addMealToDay(activeDayKey, m); }}
+                        onClick={() => setPreviewMeal(m)}
+                        onKeyDown={(e) => { if (e.key === "Enter") setPreviewMeal(m); }}
                       >
                         <button className="suggested-del" onClick={(e) => { e.stopPropagation(); saveSuggestionToMyMeals(m); }} aria-label="Save to My Meals" title="Save to My Meals">
                           <Star size={12} />
@@ -1108,8 +1149,8 @@ export default function App() {
                     role="button"
                     tabIndex={0}
                     key={m.id}
-                    onClick={() => addMealToDay(activeDayKey, m)}
-                    onKeyDown={(e) => { if (e.key === "Enter") addMealToDay(activeDayKey, m); }}
+                    onClick={() => setPreviewMeal(m)}
+                    onKeyDown={(e) => { if (e.key === "Enter") setPreviewMeal(m); }}
                   >
                     <button className="suggested-del" onClick={(e) => { e.stopPropagation(); deleteCustomMeal(m.id); }} aria-label="Delete meal">
                       <Trash2 size={12} />
@@ -1211,8 +1252,9 @@ export default function App() {
                     {cat.items.map((item) => {
                       const itemKey = `${cat.category}|${item.name.toLowerCase()}|${item.unit.toLowerCase()}`;
                       const isChecked = checked.has(itemKey);
-                      const avgUnitPrice = item.amount && item.amount > 0 && item.priceCount > 0 ? item.priceSum / item.amount : null;
-                      const buyAs = storePurchaseFor(item.name, item.amount, item.unit);
+                      const hasPurchase = item.purchaseItem && item.packagesNeeded !== null;
+                      const fallbackBuyAs = hasPurchase ? null : storePurchaseFor(item.name, item.amount, item.unit);
+                      const lineTotal = item.purchaseCost !== null ? item.purchaseCost : item.priceCount > 0 ? item.priceSum : null;
                       return (
                         <div key={itemKey}>
                           <div className={`receipt-line${isChecked ? " done" : ""}`} onClick={() => toggleChecked(itemKey)}>
@@ -1222,9 +1264,13 @@ export default function App() {
                             <span className="receipt-qty">{item.amount !== null ? `${formatAmount(item.amount)}${item.unit ? " " + item.unit : ""}` : (item.unit || "—")}</span>
                           </div>
                           <div className="receipt-price-line">
-                            {buyAs && <span className="receipt-buy-as">buy: {buyAs}</span>}
-                            {avgUnitPrice !== null && <span>avg ${avgUnitPrice.toFixed(2)}/{item.unit || "ea"}</span>}
-                            <span className="receipt-line-total">{item.priceCount > 0 ? `$${item.priceSum.toFixed(2)}` : "—"}</span>
+                            {hasPurchase && (
+                              <span className="receipt-buy-as">
+                                buy: {item.packagesNeeded > 1 ? `${item.packagesNeeded}× ` : ""}{item.purchaseItem}
+                              </span>
+                            )}
+                            {fallbackBuyAs && <span className="receipt-buy-as">buy: {fallbackBuyAs}</span>}
+                            <span className="receipt-line-total">{lineTotal !== null ? `$${lineTotal.toFixed(2)}` : "—"}</span>
                           </div>
                         </div>
                       );
@@ -1290,6 +1336,62 @@ export default function App() {
                 </>
               )}
               {keyStatusMsg && <div className="settings-status-msg">{keyStatusMsg}</div>}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {previewMeal && (
+        <div className="mp-overlay" style={{ zIndex: 65 }} onClick={() => setPreviewMeal(null)}>
+          <div className="mp-modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+            <div className="mp-modal-head">
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: "1.8rem" }}>{previewMeal.emoji}</span>
+                <div>
+                  <div className="mp-display" style={{ fontSize: "1.2rem", fontWeight: 700 }}>{previewMeal.name}</div>
+                  <div className="mp-mono" style={{ fontSize: "0.7rem", opacity: 0.7, marginTop: 2 }}>
+                    {(MEAL_TYPE_META[previewMeal.mealType] || MEAL_TYPE_META.dinner).label} · Serves {previewMeal.baseServings || 4}
+                  </div>
+                </div>
+              </div>
+              <button className="mp-close-btn" onClick={() => setPreviewMeal(null)}><X size={16} /></button>
+            </div>
+
+            <div className="detail-section-title">Ingredients</div>
+            <div className="detail-ingredients">
+              {(previewMeal.ingredients || []).map((ing, i) => (
+                <div className="detail-ing-row" key={i}>
+                  <span className="detail-ing-name">{ing.name}</span>
+                  <span className="receipt-dots" />
+                  <span className="detail-ing-qty">
+                    {ing.amount !== null && ing.amount !== undefined && !isNaN(Number(ing.amount))
+                      ? `${formatAmount(Number(ing.amount))}${ing.unit ? " " + ing.unit : ""}`
+                      : (ing.unit || "—")}
+                  </span>
+                </div>
+              ))}
+              {(previewMeal.ingredients || []).length === 0 && <div className="mp-empty">No ingredients listed.</div>}
+            </div>
+
+            {previewMeal.instructions && (
+              <>
+                <div className="detail-section-title" style={{ marginTop: 16 }}>Instructions</div>
+                <div className="detail-instructions" style={{ maxHeight: 200, overflowY: "auto" }}>{previewMeal.instructions}</div>
+              </>
+            )}
+
+            <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
+              <button
+                className="mp-primary-btn"
+                style={{ flex: 1 }}
+                onClick={() => { addMealToDay(activeDayKey, previewMeal); setPreviewMeal(null); }}
+              >
+                <Plus size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />
+                Add to {activeDayLabel || "this day"}
+              </button>
+              <button className="mp-secondary-btn" style={{ width: "auto", padding: "0 18px" }} onClick={() => setPreviewMeal(null)}>
+                Cancel
+              </button>
             </div>
           </div>
         </div>
