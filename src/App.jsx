@@ -19,6 +19,30 @@ import {
 import { storage } from "./storage";
 import { askLLM, saveApiKey, hasApiKey, clearApiKey } from "./llm";
 
+const GEMINI_API_KEY_URL = "https://aistudio.google.com/apikey";
+
+async function copyGeminiApiKeyLink() {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(GEMINI_API_KEY_URL);
+    } else {
+      const textarea = document.createElement("textarea");
+      textarea.value = GEMINI_API_KEY_URL;
+      textarea.setAttribute("readonly", "");
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+
+    window.alert("Gemini API key link copied. Paste it into your browser.");
+  } catch {
+    window.prompt("Copy this link and paste it into your browser:", GEMINI_API_KEY_URL);
+  }
+}
+
 // ---------- static data ----------
 
 const CATEGORY_META = {
@@ -29,7 +53,14 @@ const CATEGORY_META = {
   pantry: { label: "Pantry", emoji: "🥫" },
   other: { label: "Other", emoji: "🧂" },
 };
-const CATEGORY_ORDER = ["produce", "protein", "dairy", "grains", "pantry", "other"];
+const CATEGORY_ORDER = [
+  "produce",
+  "protein",
+  "dairy",
+  "grains",
+  "pantry",
+  "other",
+];
 
 const MEAL_TYPE_META = {
   breakfast: { label: "Breakfast", color: "var(--sun-mid)" },
@@ -38,7 +69,23 @@ const MEAL_TYPE_META = {
   snack: { label: "Snack", color: "var(--violet)" },
 };
 
-const EMOJI_CHOICES = ["🍽️", "🍲", "🥗", "🌮", "🍕", "🍳", "🥪", "🍜", "🍔", "🍛", "🐟", "🍚", "🥞", "🥣", "🌯"];
+const EMOJI_CHOICES = [
+  "🍽️",
+  "🍲",
+  "🥗",
+  "🌮",
+  "🍕",
+  "🍳",
+  "🥪",
+  "🍜",
+  "🍔",
+  "🍛",
+  "🐟",
+  "🍚",
+  "🥞",
+  "🥣",
+  "🌯",
+];
 
 // ---------- date helpers ----------
 
@@ -78,12 +125,22 @@ function isSameMonth(a, b) {
 }
 function formatRange(weekStart) {
   const end = addDays(weekStart, 6);
-  const startStr = weekStart.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  const endStr = end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const startStr = weekStart.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+  const endStr = end.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
   return `${startStr} – ${endStr}`;
 }
 function formatMonthLabel(monthAnchor) {
-  return monthAnchor.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  return monthAnchor.toLocaleDateString("en-US", {
+    month: "long",
+    year: "numeric",
+  });
 }
 function formatAmount(n) {
   if (n === null || n === undefined || isNaN(n)) return "";
@@ -107,31 +164,210 @@ const WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 // to a base unit (cups for volume, oz for weight) before comparing against
 // typical package sizes. Returns a string like "1 half gallon" or null when
 // no sensible mapping exists (in which case the recipe amount is shown alone).
-const VOLUME_IN_CUPS = { cup: 1, cups: 1, tbsp: 1 / 16, tablespoon: 1 / 16, tablespoons: 1 / 16, tsp: 1 / 48, teaspoon: 1 / 48, teaspoons: 1 / 48, "fl oz": 1 / 8, floz: 1 / 8, pint: 2, pints: 2, quart: 4, quarts: 4, gallon: 16, gallons: 16, ml: 1 / 236.6, l: 4.227, liter: 4.227, liters: 4.227 };
-const WEIGHT_IN_OZ = { oz: 1, ounce: 1, ounces: 1, lb: 16, lbs: 16, pound: 16, pounds: 16, g: 0.0353, gram: 0.0353, grams: 0.0353, kg: 35.27 };
+const VOLUME_IN_CUPS = {
+  cup: 1,
+  cups: 1,
+  tbsp: 1 / 16,
+  tablespoon: 1 / 16,
+  tablespoons: 1 / 16,
+  tsp: 1 / 48,
+  teaspoon: 1 / 48,
+  teaspoons: 1 / 48,
+  "fl oz": 1 / 8,
+  floz: 1 / 8,
+  pint: 2,
+  pints: 2,
+  quart: 4,
+  quarts: 4,
+  gallon: 16,
+  gallons: 16,
+  ml: 1 / 236.6,
+  l: 4.227,
+  liter: 4.227,
+  liters: 4.227,
+};
+const WEIGHT_IN_OZ = {
+  oz: 1,
+  ounce: 1,
+  ounces: 1,
+  lb: 16,
+  lbs: 16,
+  pound: 16,
+  pounds: 16,
+  g: 0.0353,
+  gram: 0.0353,
+  grams: 0.0353,
+  kg: 35.27,
+};
 
 const STORE_PACKAGES = [
-  { match: ["milk"], kind: "volume", packages: [{ size: 4, label: "quart" }, { size: 8, label: "half gallon" }, { size: 16, label: "gallon" }] },
-  { match: ["heavy cream", "whipping cream", "half and half", "half-and-half"], kind: "volume", packages: [{ size: 1, label: "half pint" }, { size: 2, label: "pint" }, { size: 4, label: "quart" }] },
-  { match: ["buttermilk"], kind: "volume", packages: [{ size: 4, label: "quart" }] },
-  { match: ["broth", "stock"], kind: "volume", packages: [{ size: 4, label: "32oz carton" }, { size: 8, label: "2 cartons (32oz)" }] },
-  { match: ["butter"], kind: "volume", packages: [{ size: 0.5, label: "stick" }, { size: 1, label: "half pound (2 sticks)" }, { size: 2, label: "1 lb box" }] },
-  { match: ["flour"], kind: "volume", packages: [{ size: 7.5, label: "2 lb bag" }, { size: 18, label: "5 lb bag" }] },
-  { match: ["sugar"], kind: "volume", packages: [{ size: 4.5, label: "2 lb bag" }, { size: 9, label: "4 lb bag" }] },
-  { match: ["rice"], kind: "volume", packages: [{ size: 2.5, label: "1 lb bag" }, { size: 5, label: "2 lb bag" }, { size: 12.5, label: "5 lb bag" }] },
-  { match: ["oats", "oatmeal"], kind: "volume", packages: [{ size: 5, label: "18oz canister" }, { size: 12, label: "42oz canister" }] },
-  { match: ["oil"], kind: "volume", packages: [{ size: 2, label: "16oz bottle" }, { size: 6, label: "48oz bottle" }] },
-  { match: ["soy sauce", "worcestershire", "vinegar"], kind: "volume", packages: [{ size: 1.25, label: "10oz bottle" }] },
-  { match: ["yogurt"], kind: "volume", packages: [{ size: 0.75, label: "6oz cup" }, { size: 4, label: "32oz tub" }] },
-  { match: ["sour cream"], kind: "volume", packages: [{ size: 1, label: "8oz tub" }, { size: 2, label: "16oz tub" }] },
-  { match: ["cheese"], kind: "volume", packages: [{ size: 2, label: "8oz bag/block" }, { size: 4, label: "16oz bag/block" }] },
-  { match: ["egg"], kind: "count", packages: [{ size: 12, label: "dozen" }, { size: 18, label: "18-count" }] },
-  { match: ["pasta", "spaghetti", "penne", "macaroni", "fettuccine", "rigatoni", "linguine"], kind: "weight", packages: [{ size: 16, label: "1 lb box" }] },
-  { match: ["ground beef", "ground turkey", "ground pork", "ground chicken"], kind: "weight", packages: [{ size: 16, label: "1 lb pack" }, { size: 32, label: "2 lb pack" }] },
-  { match: ["chicken breast", "chicken thigh", "chicken thighs"], kind: "weight", packages: [{ size: 16, label: "~1 lb pack" }, { size: 32, label: "~2 lb pack" }] },
-  { match: ["bacon"], kind: "count", unitHints: ["slice", "slices"], packages: [{ size: 12, label: "12oz pack (~12 slices)" }] },
-  { match: ["bread"], kind: "count", unitHints: ["slice", "slices"], packages: [{ size: 20, label: "loaf" }] },
-  { match: ["tortilla", "taco shell"], kind: "count", packages: [{ size: 8, label: "8-count pack" }, { size: 10, label: "10-count pack" }] },
+  {
+    match: ["milk"],
+    kind: "volume",
+    packages: [
+      { size: 4, label: "quart" },
+      { size: 8, label: "half gallon" },
+      { size: 16, label: "gallon" },
+    ],
+  },
+  {
+    match: ["heavy cream", "whipping cream", "half and half", "half-and-half"],
+    kind: "volume",
+    packages: [
+      { size: 1, label: "half pint" },
+      { size: 2, label: "pint" },
+      { size: 4, label: "quart" },
+    ],
+  },
+  {
+    match: ["buttermilk"],
+    kind: "volume",
+    packages: [{ size: 4, label: "quart" }],
+  },
+  {
+    match: ["broth", "stock"],
+    kind: "volume",
+    packages: [
+      { size: 4, label: "32oz carton" },
+      { size: 8, label: "2 cartons (32oz)" },
+    ],
+  },
+  {
+    match: ["butter"],
+    kind: "volume",
+    packages: [
+      { size: 0.5, label: "stick" },
+      { size: 1, label: "half pound (2 sticks)" },
+      { size: 2, label: "1 lb box" },
+    ],
+  },
+  {
+    match: ["flour"],
+    kind: "volume",
+    packages: [
+      { size: 7.5, label: "2 lb bag" },
+      { size: 18, label: "5 lb bag" },
+    ],
+  },
+  {
+    match: ["sugar"],
+    kind: "volume",
+    packages: [
+      { size: 4.5, label: "2 lb bag" },
+      { size: 9, label: "4 lb bag" },
+    ],
+  },
+  {
+    match: ["rice"],
+    kind: "volume",
+    packages: [
+      { size: 2.5, label: "1 lb bag" },
+      { size: 5, label: "2 lb bag" },
+      { size: 12.5, label: "5 lb bag" },
+    ],
+  },
+  {
+    match: ["oats", "oatmeal"],
+    kind: "volume",
+    packages: [
+      { size: 5, label: "18oz canister" },
+      { size: 12, label: "42oz canister" },
+    ],
+  },
+  {
+    match: ["oil"],
+    kind: "volume",
+    packages: [
+      { size: 2, label: "16oz bottle" },
+      { size: 6, label: "48oz bottle" },
+    ],
+  },
+  {
+    match: ["soy sauce", "worcestershire", "vinegar"],
+    kind: "volume",
+    packages: [{ size: 1.25, label: "10oz bottle" }],
+  },
+  {
+    match: ["yogurt"],
+    kind: "volume",
+    packages: [
+      { size: 0.75, label: "6oz cup" },
+      { size: 4, label: "32oz tub" },
+    ],
+  },
+  {
+    match: ["sour cream"],
+    kind: "volume",
+    packages: [
+      { size: 1, label: "8oz tub" },
+      { size: 2, label: "16oz tub" },
+    ],
+  },
+  {
+    match: ["cheese"],
+    kind: "volume",
+    packages: [
+      { size: 2, label: "8oz bag/block" },
+      { size: 4, label: "16oz bag/block" },
+    ],
+  },
+  {
+    match: ["egg"],
+    kind: "count",
+    packages: [
+      { size: 12, label: "dozen" },
+      { size: 18, label: "18-count" },
+    ],
+  },
+  {
+    match: [
+      "pasta",
+      "spaghetti",
+      "penne",
+      "macaroni",
+      "fettuccine",
+      "rigatoni",
+      "linguine",
+    ],
+    kind: "weight",
+    packages: [{ size: 16, label: "1 lb box" }],
+  },
+  {
+    match: ["ground beef", "ground turkey", "ground pork", "ground chicken"],
+    kind: "weight",
+    packages: [
+      { size: 16, label: "1 lb pack" },
+      { size: 32, label: "2 lb pack" },
+    ],
+  },
+  {
+    match: ["chicken breast", "chicken thigh", "chicken thighs"],
+    kind: "weight",
+    packages: [
+      { size: 16, label: "~1 lb pack" },
+      { size: 32, label: "~2 lb pack" },
+    ],
+  },
+  {
+    match: ["bacon"],
+    kind: "count",
+    unitHints: ["slice", "slices"],
+    packages: [{ size: 12, label: "12oz pack (~12 slices)" }],
+  },
+  {
+    match: ["bread"],
+    kind: "count",
+    unitHints: ["slice", "slices"],
+    packages: [{ size: 20, label: "loaf" }],
+  },
+  {
+    match: ["tortilla", "taco shell"],
+    kind: "count",
+    packages: [
+      { size: 8, label: "8-count pack" },
+      { size: 10, label: "10-count pack" },
+    ],
+  },
 ];
 
 function toBaseAmount(amount, unit, kind) {
@@ -145,18 +381,28 @@ function toBaseAmount(amount, unit, kind) {
     return null;
   }
   if (kind === "count") {
-    if (!u || ["", "slice", "slices", "count", "large", "medium", "small"].includes(u)) return amount;
+    if (
+      !u ||
+      ["", "slice", "slices", "count", "large", "medium", "small"].includes(u)
+    )
+      return amount;
     return null;
   }
   return null;
 }
 
 function storePurchaseFor(name, amount, unit) {
-  if (amount === null || amount === undefined || isNaN(amount) || amount <= 0) return null;
+  if (amount === null || amount === undefined || isNaN(amount) || amount <= 0)
+    return null;
   const lower = (name || "").toLowerCase();
   for (const entry of STORE_PACKAGES) {
     if (!entry.match.some((kw) => lower.includes(kw))) continue;
-    if (entry.unitHints && unit && !entry.unitHints.includes((unit || "").toLowerCase())) continue;
+    if (
+      entry.unitHints &&
+      unit &&
+      !entry.unitHints.includes((unit || "").toLowerCase())
+    )
+      continue;
     const base = toBaseAmount(amount, unit, entry.kind);
     if (base === null) continue;
     for (const pkg of entry.packages) {
@@ -175,20 +421,30 @@ function buildShoppingList(assignments, includeKeys) {
   Object.entries(assignments).forEach(([dKey, mealsForDay]) => {
     if (!includeSet.has(dKey)) return;
     (mealsForDay || []).forEach((meal) => {
-      const scale = meal.baseServings ? (meal.servings || meal.baseServings) / meal.baseServings : 1;
+      const scale = meal.baseServings
+        ? (meal.servings || meal.baseServings) / meal.baseServings
+        : 1;
       (meal.ingredients || []).forEach((ing) => {
-        const category = CATEGORY_ORDER.includes(ing.category) ? ing.category : "other";
+        const category = CATEGORY_ORDER.includes(ing.category)
+          ? ing.category
+          : "other";
         const unit = (ing.unit || "").trim();
         const name = (ing.name || "").trim();
         if (!name) return;
         const key = name.toLowerCase() + "|" + unit.toLowerCase();
         if (!buckets[category]) buckets[category] = {};
         const amountNum =
-          ing.amount === "" || ing.amount === null || ing.amount === undefined || isNaN(Number(ing.amount))
+          ing.amount === "" ||
+          ing.amount === null ||
+          ing.amount === undefined ||
+          isNaN(Number(ing.amount))
             ? null
             : Number(ing.amount) * scale;
         const priceNum =
-          ing.price === "" || ing.price === null || ing.price === undefined || isNaN(Number(ing.price))
+          ing.price === "" ||
+          ing.price === null ||
+          ing.price === undefined ||
+          isNaN(Number(ing.price))
             ? null
             : Number(ing.price) * scale;
         if (!buckets[category][key]) {
@@ -204,7 +460,10 @@ function buildShoppingList(assignments, includeKeys) {
           };
         } else {
           const existing = buckets[category][key];
-          existing.amount = existing.amount !== null && amountNum !== null ? existing.amount + amountNum : null;
+          existing.amount =
+            existing.amount !== null && amountNum !== null
+              ? existing.amount + amountNum
+              : null;
           if (priceNum !== null) {
             existing.priceSum += priceNum;
             existing.priceCount += 1;
@@ -226,25 +485,39 @@ function buildShoppingList(assignments, includeKeys) {
         let packagesNeeded = null;
         if (it.purchaseItem) {
           if (it.purchaseAmount && it.amount !== null) {
-            packagesNeeded = Math.max(1, Math.ceil(it.amount / it.purchaseAmount));
+            packagesNeeded = Math.max(
+              1,
+              Math.ceil(it.amount / it.purchaseAmount),
+            );
           } else {
             packagesNeeded = 1;
           }
         }
         const purchaseCost =
-          packagesNeeded !== null && it.purchasePrice !== null ? packagesNeeded * it.purchasePrice : null;
+          packagesNeeded !== null && it.purchasePrice !== null
+            ? packagesNeeded * it.purchasePrice
+            : null;
         return { ...it, packagesNeeded, purchaseCost };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
     const categoryTotal = items.reduce(
-      (s, it) => s + (it.purchaseCost !== null ? it.purchaseCost : it.priceCount > 0 ? it.priceSum : 0),
-      0
+      (s, it) =>
+        s +
+        (it.purchaseCost !== null
+          ? it.purchaseCost
+          : it.priceCount > 0
+            ? it.priceSum
+            : 0),
+      0,
     );
     return { category: c, items, categoryTotal };
   });
 }
 
-const BAR_WIDTHS = [2, 4, 1, 3, 2, 5, 1, 2, 4, 3, 1, 2, 5, 2, 1, 3, 4, 2, 1, 3, 2, 4, 1, 3, 2, 5, 1, 2];
+const BAR_WIDTHS = [
+  2, 4, 1, 3, 2, 5, 1, 2, 4, 3, 1, 2, 5, 2, 1, 3, 4, 2, 1, 3, 2, 4, 1, 3, 2, 5,
+  1, 2,
+];
 
 function makeInstanceId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -254,13 +527,23 @@ function makeCustomMealId() {
 }
 
 function emptyIngredientRow() {
-  return { rid: Math.random().toString(36).slice(2, 9), name: "", amount: "", unit: "", price: "", category: "produce" };
+  return {
+    rid: Math.random().toString(36).slice(2, 9),
+    name: "",
+    amount: "",
+    unit: "",
+    price: "",
+    category: "produce",
+  };
 }
 
 // ---------- AI meal suggestions ----------
 
 function buildMealSuggestionPrompt(userPrompt, dayLabel) {
-  const want = userPrompt && userPrompt.trim() ? userPrompt.trim() : "any tasty, well-rounded meal";
+  const want =
+    userPrompt && userPrompt.trim()
+      ? userPrompt.trim()
+      : "any tasty, well-rounded meal";
   return `You are a meal-planning assistant. Suggest 4 distinct meal ideas for ${dayLabel}, based on this request: "${want}".
 
 Respond with ONLY a raw JSON array — no markdown, no code fences, no commentary before or after — matching exactly this shape:
@@ -290,29 +573,92 @@ Return exactly 4 meals, each with 4-7 realistic ingredients and clear instructio
 
 function parseMealSuggestions(raw) {
   let cleaned = (raw || "").trim();
-  cleaned = cleaned.replace(/^```json/i, "").replace(/^```/, "").replace(/```$/, "").trim();
+  cleaned = cleaned
+    .replace(/^```json/i, "")
+    .replace(/^```/, "")
+    .replace(/```$/, "")
+    .trim();
+
   const parsed = JSON.parse(cleaned);
-  if (!Array.isArray(parsed)) throw new Error("Unexpected response shape from the model.");
-  return parsed.map((m, i) => {
+
+  const meals = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(parsed.meals)
+      ? parsed.meals
+      : Array.isArray(parsed.suggestions)
+        ? parsed.suggestions
+        : Array.isArray(parsed.mealSuggestions)
+          ? parsed.mealSuggestions
+          : null;
+
+  if (!meals) {
+    throw new Error("Unexpected response shape from the model.");
+  }
+
+  return meals.map((m, i) => {
     const mealType = String(m.mealType || "dinner").toLowerCase();
+
     return {
       id: `ai-${Date.now()}-${i}`,
       name: String(m.name || "Untitled meal").trim(),
-      emoji: String(m.emoji || "🍽️").trim() || "🍽️",
-      mealType: Object.prototype.hasOwnProperty.call(MEAL_TYPE_META, mealType) ? mealType : "dinner",
-      baseServings: Number(m.baseServings) > 0 ? Math.round(Number(m.baseServings)) : 4,
+      emoji: String(m.emoji || "🍽").trim() || "🍽",
+      mealType: Object.prototype.hasOwnProperty.call(MEAL_TYPE_META, mealType)
+        ? mealType
+        : "dinner",
+      baseServings:
+        Number(m.baseServings) > 0 ? Math.round(Number(m.baseServings)) : 4,
       ingredients: Array.isArray(m.ingredients)
         ? m.ingredients
-            .map((ing) => ({
-              name: String(ing.name || "").trim(),
-              amount: ing.amount === undefined || ing.amount === null || isNaN(Number(ing.amount)) ? null : Number(ing.amount),
-              unit: String(ing.unit || "").trim(),
-              category: CATEGORY_ORDER.includes(ing.category) ? ing.category : "other",
-              price: ing.price === undefined || ing.price === null || isNaN(Number(ing.price)) ? null : Number(ing.price),
-              purchaseItem: ing.purchaseItem ? String(ing.purchaseItem).trim() : null,
-              purchaseAmount: ing.purchaseAmount === undefined || ing.purchaseAmount === null || isNaN(Number(ing.purchaseAmount)) || Number(ing.purchaseAmount) <= 0 ? null : Number(ing.purchaseAmount),
-              purchasePrice: ing.purchasePrice === undefined || ing.purchasePrice === null || isNaN(Number(ing.purchasePrice)) ? null : Number(ing.purchasePrice),
-            }))
+            .map((ing) => {
+              if (typeof ing === "string") {
+                return {
+                  name: ing.trim(),
+                  amount: null,
+                  unit: "",
+                  category: "other",
+                  price: null,
+                  purchaseItem: null,
+                  purchaseAmount: null,
+                  purchasePrice: null,
+                };
+              }
+
+              return {
+                name: String(ing.name || "").trim(),
+                amount:
+                  ing.amount === undefined ||
+                  ing.amount === null ||
+                  isNaN(Number(ing.amount))
+                    ? null
+                    : Number(ing.amount),
+                unit: String(ing.unit || "").trim(),
+                category: CATEGORY_ORDER.includes(ing.category)
+                  ? ing.category
+                  : "other",
+                price:
+                  ing.price === undefined ||
+                  ing.price === null ||
+                  isNaN(Number(ing.price))
+                    ? null
+                    : Number(ing.price),
+                purchaseItem: ing.purchaseItem
+                  ? String(ing.purchaseItem).trim()
+                  : null,
+                purchaseAmount:
+                  ing.purchaseAmount === undefined ||
+                  ing.purchaseAmount === null ||
+                  isNaN(Number(ing.purchaseAmount)) ||
+                  Number(ing.purchaseAmount) <= 0
+                    ? null
+                    : Number(ing.purchaseAmount),
+                purchasePrice:
+                  ing.purchasePrice === undefined ||
+                  ing.purchasePrice === null ||
+                  isNaN(Number(ing.purchasePrice))
+                    ? null
+                    : Number(ing.purchasePrice),
+              };
+            })
             .filter((ing) => ing.name)
         : [],
       instructions: m.instructions ? String(m.instructions).trim() : null,
@@ -345,7 +691,8 @@ export default function App() {
   const [activeDayKey, setActiveDayKey] = useState(null);
   const [previewMeal, setPreviewMeal] = useState(null); // suggestion/My Meal being previewed before adding
   const [detailMeal, setDetailMeal] = useState(null); // { dayKey, instanceId } of the meal being viewed
-  const [detailInstructionsLoading, setDetailInstructionsLoading] = useState(false);
+  const [detailInstructionsLoading, setDetailInstructionsLoading] =
+    useState(false);
   const [detailInstructionsError, setDetailInstructionsError] = useState("");
   const [modalTab, setModalTab] = useState("suggested");
   const [showShoppingList, setShowShoppingList] = useState(false);
@@ -361,7 +708,9 @@ export default function App() {
   const [newMealType, setNewMealType] = useState("dinner");
   const [newMealServings, setNewMealServings] = useState(4);
   const [newMealInstructionsInput, setNewMealInstructionsInput] = useState("");
-  const [newMealIngredients, setNewMealIngredients] = useState([emptyIngredientRow()]);
+  const [newMealIngredients, setNewMealIngredients] = useState([
+    emptyIngredientRow(),
+  ]);
 
   const today = new Date();
 
@@ -443,8 +792,14 @@ export default function App() {
 
   const weekStart = useMemo(() => getMonday(cursorDate), [cursorDate]);
   const monthAnchor = useMemo(() => startOfMonth(cursorDate), [cursorDate]);
-  const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
-  const monthGridDates = useMemo(() => getMonthGridDates(monthAnchor), [monthAnchor]);
+  const days = useMemo(
+    () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
+    [weekStart],
+  );
+  const monthGridDates = useMemo(
+    () => getMonthGridDates(monthAnchor),
+    [monthAnchor],
+  );
 
   const rangeDateKeys = useMemo(() => {
     if (viewMode === "week") return days.map(dateKey);
@@ -460,10 +815,14 @@ export default function App() {
   }, [viewMode, days, cursorDate]);
 
   function goPrev() {
-    setCursorDate((d) => (viewMode === "week" ? addDays(d, -7) : addMonths(d, -1)));
+    setCursorDate((d) =>
+      viewMode === "week" ? addDays(d, -7) : addMonths(d, -1),
+    );
   }
   function goNext() {
-    setCursorDate((d) => (viewMode === "week" ? addDays(d, 7) : addMonths(d, 1)));
+    setCursorDate((d) =>
+      viewMode === "week" ? addDays(d, 7) : addMonths(d, 1),
+    );
   }
   function goToday() {
     setCursorDate(new Date());
@@ -520,7 +879,9 @@ export default function App() {
     setAssignments((prev) => {
       const next = {
         ...prev,
-        [dayKey]: (prev[dayKey] || []).map((m) => (m.instanceId === instanceId ? { ...m, servings: clamped } : m)),
+        [dayKey]: (prev[dayKey] || []).map((m) =>
+          m.instanceId === instanceId ? { ...m, servings: clamped } : m,
+        ),
       };
       persistAssignments(next);
       return next;
@@ -529,7 +890,12 @@ export default function App() {
 
   function removeMealFromDay(dayKey, instanceId) {
     setAssignments((prev) => {
-      const next = { ...prev, [dayKey]: (prev[dayKey] || []).filter((m) => m.instanceId !== instanceId) };
+      const next = {
+        ...prev,
+        [dayKey]: (prev[dayKey] || []).filter(
+          (m) => m.instanceId !== instanceId,
+        ),
+      };
       persistAssignments(next);
       return next;
     });
@@ -562,7 +928,9 @@ export default function App() {
   }
 
   function updateIngredientRow(rid, field, value) {
-    setNewMealIngredients((prev) => prev.map((row) => (row.rid === rid ? { ...row, [field]: value } : row)));
+    setNewMealIngredients((prev) =>
+      prev.map((row) => (row.rid === rid ? { ...row, [field]: value } : row)),
+    );
   }
   function removeIngredientRow(rid) {
     setNewMealIngredients((prev) => prev.filter((row) => row.rid !== rid));
@@ -577,7 +945,9 @@ export default function App() {
         amount: row.amount === "" ? null : Number(row.amount),
         unit: row.unit.trim(),
         price: row.price === "" ? null : Number(row.price),
-        category: CATEGORY_ORDER.includes(row.category) ? row.category : "other",
+        category: CATEGORY_ORDER.includes(row.category)
+          ? row.category
+          : "other",
       }));
     if (!name || ingredients.length === 0) return;
     const meal = {
@@ -599,22 +969,44 @@ export default function App() {
     setModalTab("mine");
   }
 
-  const shoppingList = useMemo(() => buildShoppingList(assignments, rangeDateKeys), [assignments, rangeDateKeys]);
-  const totalItems = shoppingList.reduce((sum, cat) => sum + cat.items.length, 0);
-  const grandTotal = shoppingList.reduce((sum, cat) => sum + cat.categoryTotal, 0);
+  const shoppingList = useMemo(
+    () => buildShoppingList(assignments, rangeDateKeys),
+    [assignments, rangeDateKeys],
+  );
+  const totalItems = shoppingList.reduce(
+    (sum, cat) => sum + cat.items.length,
+    0,
+  );
+  const grandTotal = shoppingList.reduce(
+    (sum, cat) => sum + cat.categoryTotal,
+    0,
+  );
   const itemsWithoutPrice = shoppingList.reduce(
-    (sum, cat) => sum + cat.items.filter((it) => it.purchaseCost === null && it.priceCount === 0).length,
-    0
+    (sum, cat) =>
+      sum +
+      cat.items.filter((it) => it.purchaseCost === null && it.priceCount === 0)
+        .length,
+    0,
   );
   const activeDayMeals = activeDayKey ? assignments[activeDayKey] || [] : [];
   const detailMealData = detailMeal
-    ? (assignments[detailMeal.dayKey] || []).find((m) => m.instanceId === detailMeal.instanceId) || null
+    ? (assignments[detailMeal.dayKey] || []).find(
+        (m) => m.instanceId === detailMeal.instanceId,
+      ) || null
     : null;
   const detailMealDayLabel = detailMeal
-    ? new Date(detailMeal.dayKey + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
+    ? new Date(detailMeal.dayKey + "T00:00:00").toLocaleDateString("en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+      })
     : "";
   const activeDayLabel = activeDayKey
-    ? new Date(activeDayKey + "T00:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
+    ? new Date(activeDayKey + "T00:00:00").toLocaleDateString("en-US", {
+        weekday: "long",
+        month: "long",
+        day: "numeric",
+      })
     : "";
 
   function dismissOnboarding() {
@@ -647,7 +1039,10 @@ export default function App() {
       const result = await askLLM(text);
       setAskMessages((prev) => [...prev, { role: "assistant", text: result }]);
     } catch (e) {
-      setAskMessages((prev) => [...prev, { role: "assistant", text: `⚠️ ${e?.message || e}` }]);
+      setAskMessages((prev) => [
+        ...prev,
+        { role: "assistant", text: `⚠️ ${e?.message || e}` },
+      ]);
     }
     setAskSending(false);
   }
@@ -668,12 +1063,15 @@ export default function App() {
   }
 
   async function generateMealSuggestions(promptOverride) {
-    const effectivePrompt = promptOverride !== undefined ? promptOverride : aiSuggestPrompt;
+    const effectivePrompt =
+      promptOverride !== undefined ? promptOverride : aiSuggestPrompt;
     setAiSuggestLoading(true);
     setAiSuggestError("");
     setAiSuggestions([]);
     try {
-      const raw = await askLLM(buildMealSuggestionPrompt(effectivePrompt, activeDayLabel || "today"));
+      const raw = await askLLM(
+        buildMealSuggestionPrompt(effectivePrompt, activeDayLabel || "today"),
+      );
       const parsed = parseMealSuggestions(raw);
       setAiSuggestions(parsed);
     } catch (e) {
@@ -687,10 +1085,12 @@ export default function App() {
     setDetailInstructionsLoading(true);
     try {
       const ingList = (detailMealData.ingredients || [])
-        .map((ing) => `${ing.amount ?? ""} ${ing.unit || ""} ${ing.name}`.trim())
+        .map((ing) =>
+          `${ing.amount ?? ""} ${ing.unit || ""} ${ing.name}`.trim(),
+        )
         .join(", ");
       const raw = await askLLM(
-        `Write numbered, step-by-step cooking instructions for "${detailMealData.name}" (serves ${detailMealData.baseServings || 4}) using these ingredients: ${ingList}. Respond with ONLY the numbered steps as plain text, one step per line. No introduction, no commentary.`
+        `Write numbered, step-by-step cooking instructions for "${detailMealData.name}" (serves ${detailMealData.baseServings || 4}) using these ingredients: ${ingList}. Respond with ONLY the numbered steps as plain text, one step per line. No introduction, no commentary.`,
       );
       const instructions = (raw || "").trim();
       if (instructions) {
@@ -698,7 +1098,9 @@ export default function App() {
           const next = {
             ...prev,
             [detailMeal.dayKey]: (prev[detailMeal.dayKey] || []).map((m) =>
-              m.instanceId === detailMeal.instanceId ? { ...m, instructions } : m
+              m.instanceId === detailMeal.instanceId
+                ? { ...m, instructions }
+                : m,
             ),
           };
           persistAssignments(next);
@@ -706,7 +1108,9 @@ export default function App() {
         });
       }
     } catch (e) {
-      setDetailInstructionsError(`Couldn't generate instructions: ${e?.message || e}`);
+      setDetailInstructionsError(
+        `Couldn't generate instructions: ${e?.message || e}`,
+      );
     }
     setDetailInstructionsLoading(false);
   }
@@ -892,7 +1296,7 @@ export default function App() {
         .settings-link-btn { background:none; border:none; color:var(--text-dim); text-decoration:underline; font-size:0.78rem; cursor:pointer; padding:0; }
         .settings-link-btn:hover { color:var(--text); }
         .settings-link-btn.danger:hover { color:var(--magenta-soft); }
-        .settings-get-key-link { font-size:0.78rem; color:var(--cyan); text-decoration:none; }
+        .settings-get-key-link { background:none; border:none; padding:0; font:inherit; font-size:0.78rem; color:var(--cyan); text-decoration:none; cursor:pointer; }
         .settings-get-key-link:hover { text-decoration:underline; }
         .settings-status-msg { margin-top:8px; font-size:0.78rem; color:var(--text-dim); font-family:'Space Mono',monospace; }
         .ask-panel { position:fixed; top:0; right:0; height:100vh; padding-top:env(safe-area-inset-top, 0px); width:100%; max-width:400px; background: linear-gradient(180deg, var(--night-mid), var(--night)); color:var(--text); box-shadow:-10px 0 30px rgba(0,0,0,0.5); z-index:70; display:flex; flex-direction:column; border-left: 1px solid var(--border-glow); }
@@ -909,43 +1313,86 @@ export default function App() {
           <div className="mp-title-row">
             <Utensils size={26} color="var(--magenta-soft)" />
             <div>
-              <div className="mp-display" style={{ fontSize: "1.5rem", fontWeight: 700, lineHeight: 1.2 }}>
+              <div
+                className="mp-display"
+                style={{ fontSize: "1.5rem", fontWeight: 700, lineHeight: 1.2 }}
+              >
                 {viewMode === "week" ? "This Week's Menu" : "This Month's Menu"}
               </div>
-              <div className="mp-mono" style={{ fontSize: "0.76rem", opacity: 0.75, marginTop: 6 }}>
-                {viewMode === "week" ? formatRange(weekStart) : formatMonthLabel(monthAnchor)}
+              <div
+                className="mp-mono"
+                style={{ fontSize: "0.76rem", opacity: 0.75, marginTop: 6 }}
+              >
+                {viewMode === "week"
+                  ? formatRange(weekStart)
+                  : formatMonthLabel(monthAnchor)}
               </div>
             </div>
           </div>
           <div className="mp-nav">
             <div className="view-toggle">
-              <button className={`view-toggle-btn${viewMode === "week" ? " active" : ""}`} onClick={() => setViewMode("week")}>Week</button>
-              <button className={`view-toggle-btn${viewMode === "month" ? " active" : ""}`} onClick={() => setViewMode("month")}>Month</button>
+              <button
+                className={`view-toggle-btn${viewMode === "week" ? " active" : ""}`}
+                onClick={() => setViewMode("week")}
+              >
+                Week
+              </button>
+              <button
+                className={`view-toggle-btn${viewMode === "month" ? " active" : ""}`}
+                onClick={() => setViewMode("month")}
+              >
+                Month
+              </button>
             </div>
-            <button className="mp-nav-btn" onClick={goPrev} aria-label="Previous">
+            <button
+              className="mp-nav-btn"
+              onClick={goPrev}
+              aria-label="Previous"
+            >
               <ChevronLeft size={18} />
             </button>
-            <button className="mp-today-btn" onClick={goToday}>Today</button>
+            <button className="mp-today-btn" onClick={goToday}>
+              Today
+            </button>
             <button className="mp-nav-btn" onClick={goNext} aria-label="Next">
               <ChevronRight size={18} />
             </button>
-            <button className="mp-nav-btn" onClick={() => setShowAskAI(true)} aria-label="Ask AI">
+            <button
+              className="mp-nav-btn"
+              onClick={() => setShowAskAI(true)}
+              aria-label="Ask AI"
+            >
               <MessageCircle size={16} />
             </button>
-            <button className="mp-nav-btn" onClick={() => setShowSettings(true)} aria-label="Settings">
+            <button
+              className="mp-nav-btn"
+              onClick={() => setShowSettings(true)}
+              aria-label="Settings"
+            >
               <Settings size={16} />
             </button>
           </div>
         </div>
 
         {storageWarning && (
-          <div className="mp-warning">Changes aren't saving right now, so your plan may reset on reload. You can keep going in the meantime.</div>
+          <div className="mp-warning">
+            Changes aren't saving right now, so your plan may reset on reload.
+            You can keep going in the meantime.
+          </div>
         )}
 
         {loading ? (
           <div className="mp-loading">
-            <Loader2 size={28} style={{ animation: "spin 1s linear infinite" }} />
-            <div className="mp-mono" style={{ fontSize: "0.85rem", opacity: 0.7 }}>Setting the table…</div>
+            <Loader2
+              size={28}
+              style={{ animation: "spin 1s linear infinite" }}
+            />
+            <div
+              className="mp-mono"
+              style={{ fontSize: "0.85rem", opacity: 0.7 }}
+            >
+              Setting the table…
+            </div>
             <style>{`@keyframes spin { from{transform:rotate(0deg);} to{transform:rotate(360deg);} }`}</style>
           </div>
         ) : viewMode === "week" ? (
@@ -957,30 +1404,92 @@ export default function App() {
               return (
                 <div className={`day-card${isToday ? " today" : ""}`} key={key}>
                   <div className="day-card-head">
-                    <div className="day-name">{d.toLocaleDateString("en-US", { weekday: "short" })}</div>
-                    <div className="day-date">{d.toLocaleDateString("en-US", { month: "short", day: "numeric" })}</div>
+                    <div className="day-name">
+                      {d.toLocaleDateString("en-US", { weekday: "short" })}
+                    </div>
+                    <div className="day-date">
+                      {d.toLocaleDateString("en-US", {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </div>
                   </div>
                   <div className="meal-list">
                     {meals.map((m) => (
                       <div className="meal-chip" key={m.instanceId}>
                         <div className="meal-chip-top">
-                          <span className="meal-dot" style={{ background: (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).color, color: (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).color }} />
+                          <span
+                            className="meal-dot"
+                            style={{
+                              background: (
+                                MEAL_TYPE_META[m.mealType] ||
+                                MEAL_TYPE_META.dinner
+                              ).color,
+                              color: (
+                                MEAL_TYPE_META[m.mealType] ||
+                                MEAL_TYPE_META.dinner
+                              ).color,
+                            }}
+                          />
                           <span style={{ fontSize: "1rem" }}>{m.emoji}</span>
                           <span
                             className="meal-name meal-name-link"
                             role="button"
                             tabIndex={0}
-                            onClick={() => setDetailMeal({ dayKey: key, instanceId: m.instanceId })}
-                            onKeyDown={(e) => { if (e.key === "Enter") setDetailMeal({ dayKey: key, instanceId: m.instanceId }); }}
-                          >{m.name}</span>
-                          <button className="meal-remove" onClick={() => removeMealFromDay(key, m.instanceId)} aria-label="Remove meal">
+                            onClick={() =>
+                              setDetailMeal({
+                                dayKey: key,
+                                instanceId: m.instanceId,
+                              })
+                            }
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter")
+                                setDetailMeal({
+                                  dayKey: key,
+                                  instanceId: m.instanceId,
+                                });
+                            }}
+                          >
+                            {m.name}
+                          </span>
+                          <button
+                            className="meal-remove"
+                            onClick={() => removeMealFromDay(key, m.instanceId)}
+                            aria-label="Remove meal"
+                          >
                             <X size={14} />
                           </button>
                         </div>
                         <div className="meal-servings">
-                          <button className="servings-btn" onClick={() => updateMealServings(key, m.instanceId, (m.servings || m.baseServings || 4) - 1)} aria-label="Fewer servings">−</button>
-                          <span>{m.servings || m.baseServings || 4} servings</span>
-                          <button className="servings-btn" onClick={() => updateMealServings(key, m.instanceId, (m.servings || m.baseServings || 4) + 1)} aria-label="More servings">+</button>
+                          <button
+                            className="servings-btn"
+                            onClick={() =>
+                              updateMealServings(
+                                key,
+                                m.instanceId,
+                                (m.servings || m.baseServings || 4) - 1,
+                              )
+                            }
+                            aria-label="Fewer servings"
+                          >
+                            −
+                          </button>
+                          <span>
+                            {m.servings || m.baseServings || 4} servings
+                          </span>
+                          <button
+                            className="servings-btn"
+                            onClick={() =>
+                              updateMealServings(
+                                key,
+                                m.instanceId,
+                                (m.servings || m.baseServings || 4) + 1,
+                              )
+                            }
+                            aria-label="More servings"
+                          >
+                            +
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -1003,7 +1512,9 @@ export default function App() {
           <>
             <div className="month-weekday-row">
               {WEEKDAY_LABELS.map((w) => (
-                <div className="month-weekday-label" key={w}>{w}</div>
+                <div className="month-weekday-label" key={w}>
+                  {w}
+                </div>
               ))}
             </div>
             <div className="month-grid">
@@ -1027,9 +1538,13 @@ export default function App() {
                     <div className="month-cell-date">{d.getDate()}</div>
                     <div className="month-preview-row">
                       {preview.map((m) => (
-                        <span key={m.instanceId} title={m.name}>{m.emoji}</span>
+                        <span key={m.instanceId} title={m.name}>
+                          {m.emoji}
+                        </span>
                       ))}
-                      {extra > 0 && <span className="month-more-badge">+{extra}</span>}
+                      {extra > 0 && (
+                        <span className="month-more-badge">+{extra}</span>
+                      )}
                     </div>
                   </div>
                 );
@@ -1049,8 +1564,18 @@ export default function App() {
         <div className="mp-overlay" onClick={() => setActiveDayKey(null)}>
           <div className="mp-modal" onClick={(e) => e.stopPropagation()}>
             <div className="mp-modal-head">
-              <div className="mp-display" style={{ fontSize: "1.2rem", fontWeight: 600 }}>Add a meal</div>
-              <button className="mp-close-btn" onClick={() => setActiveDayKey(null)}><X size={16} /></button>
+              <div
+                className="mp-display"
+                style={{ fontSize: "1.2rem", fontWeight: 600 }}
+              >
+                Add a meal
+              </div>
+              <button
+                className="mp-close-btn"
+                onClick={() => setActiveDayKey(null)}
+              >
+                <X size={16} />
+              </button>
             </div>
             <div className="modal-day-title">{activeDayLabel}</div>
 
@@ -1059,59 +1584,145 @@ export default function App() {
                 {activeDayMeals.map((m) => (
                   <div className="meal-chip" key={m.instanceId}>
                     <div className="meal-chip-top">
-                      <span className="meal-dot" style={{ background: (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).color, color: (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).color }} />
+                      <span
+                        className="meal-dot"
+                        style={{
+                          background: (
+                            MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner
+                          ).color,
+                          color: (
+                            MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner
+                          ).color,
+                        }}
+                      />
                       <span style={{ fontSize: "1rem" }}>{m.emoji}</span>
                       <span
                         className="meal-name meal-name-link"
                         role="button"
                         tabIndex={0}
-                        onClick={() => setDetailMeal({ dayKey: activeDayKey, instanceId: m.instanceId })}
-                        onKeyDown={(e) => { if (e.key === "Enter") setDetailMeal({ dayKey: activeDayKey, instanceId: m.instanceId }); }}
-                      >{m.name}</span>
-                      <button className="meal-remove" onClick={() => removeMealFromDay(activeDayKey, m.instanceId)} aria-label="Remove meal">
+                        onClick={() =>
+                          setDetailMeal({
+                            dayKey: activeDayKey,
+                            instanceId: m.instanceId,
+                          })
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter")
+                            setDetailMeal({
+                              dayKey: activeDayKey,
+                              instanceId: m.instanceId,
+                            });
+                        }}
+                      >
+                        {m.name}
+                      </span>
+                      <button
+                        className="meal-remove"
+                        onClick={() =>
+                          removeMealFromDay(activeDayKey, m.instanceId)
+                        }
+                        aria-label="Remove meal"
+                      >
                         <X size={14} />
                       </button>
                     </div>
                     <div className="meal-servings">
-                      <button className="servings-btn" onClick={() => updateMealServings(activeDayKey, m.instanceId, (m.servings || m.baseServings || 4) - 1)} aria-label="Fewer servings">−</button>
+                      <button
+                        className="servings-btn"
+                        onClick={() =>
+                          updateMealServings(
+                            activeDayKey,
+                            m.instanceId,
+                            (m.servings || m.baseServings || 4) - 1,
+                          )
+                        }
+                        aria-label="Fewer servings"
+                      >
+                        −
+                      </button>
                       <span>{m.servings || m.baseServings || 4} servings</span>
-                      <button className="servings-btn" onClick={() => updateMealServings(activeDayKey, m.instanceId, (m.servings || m.baseServings || 4) + 1)} aria-label="More servings">+</button>
+                      <button
+                        className="servings-btn"
+                        onClick={() =>
+                          updateMealServings(
+                            activeDayKey,
+                            m.instanceId,
+                            (m.servings || m.baseServings || 4) + 1,
+                          )
+                        }
+                        aria-label="More servings"
+                      >
+                        +
+                      </button>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="modal-current-empty">Nothing planned for this day yet.</div>
+              <div className="modal-current-empty">
+                Nothing planned for this day yet.
+              </div>
             )}
 
             <div className="mp-tabs">
-              <button className={`mp-tab${modalTab === "suggested" ? " active" : ""}`} onClick={() => setModalTab("suggested")}>Suggested</button>
-              <button className={`mp-tab${modalTab === "mine" ? " active" : ""}`} onClick={() => setModalTab("mine")}>My meals</button>
-              <button className={`mp-tab${modalTab === "new" ? " active" : ""}`} onClick={() => setModalTab("new")}>New meal</button>
+              <button
+                className={`mp-tab${modalTab === "suggested" ? " active" : ""}`}
+                onClick={() => setModalTab("suggested")}
+              >
+                Suggested
+              </button>
+              <button
+                className={`mp-tab${modalTab === "mine" ? " active" : ""}`}
+                onClick={() => setModalTab("mine")}
+              >
+                My meals
+              </button>
+              <button
+                className={`mp-tab${modalTab === "new" ? " active" : ""}`}
+                onClick={() => setModalTab("new")}
+              >
+                New meal
+              </button>
             </div>
 
             {modalTab === "suggested" && (
               <>
-                <span className="mp-field-label">What are you in the mood for?</span>
+                <span className="mp-field-label">
+                  What are you in the mood for?
+                </span>
                 <div className="ai-test-row" style={{ marginBottom: 10 }}>
                   <input
                     className="mp-input"
                     value={aiSuggestPrompt}
                     onChange={(e) => setAiSuggestPrompt(e.target.value)}
                     placeholder="e.g. something quick with chicken, a cozy soup, vegetarian…"
-                    onKeyDown={(e) => { if (e.key === "Enter") generateMealSuggestions(); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") generateMealSuggestions();
+                    }}
                   />
-                  <button className="mp-primary-btn ai-test-btn" onClick={generateMealSuggestions} disabled={aiSuggestLoading}>
+                  <button
+                    className="mp-primary-btn ai-test-btn"
+                    onClick={generateMealSuggestions}
+                    disabled={aiSuggestLoading}
+                  >
                     {aiSuggestLoading ? "Thinking…" : "Suggest"}
                   </button>
                 </div>
                 <div className="settings-desc" style={{ marginBottom: 12 }}>
-                  AI-generated ideas — ingredient amounts and prices are rough estimates and may need adjusting.
+                  AI-generated ideas — ingredient amounts and prices are rough
+                  estimates and may need adjusting.
                 </div>
-                {aiSuggestError && <div className="mp-warning" style={{ margin: "0 0 12px" }}>{aiSuggestError}</div>}
+                {aiSuggestError && (
+                  <div className="mp-warning" style={{ margin: "0 0 12px" }}>
+                    {aiSuggestError}
+                  </div>
+                )}
                 {aiSuggestLoading && (
                   <div className="mp-loading" style={{ minHeight: 100 }}>
-                    <Loader2 size={24} style={{ animation: "spin 1s linear infinite" }} />
+                    <Loader2
+                      size={24}
+                      style={{ animation: "spin 1s linear infinite" }}
+                    />
                   </div>
                 )}
                 {!aiSuggestLoading && aiSuggestions.length > 0 && (
@@ -1123,21 +1734,44 @@ export default function App() {
                         tabIndex={0}
                         key={m.id}
                         onClick={() => setPreviewMeal(m)}
-                        onKeyDown={(e) => { if (e.key === "Enter") setPreviewMeal(m); }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") setPreviewMeal(m);
+                        }}
                       >
-                        <button className="suggested-del" onClick={(e) => { e.stopPropagation(); saveSuggestionToMyMeals(m); }} aria-label="Save to My Meals" title="Save to My Meals">
+                        <button
+                          className="suggested-del"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            saveSuggestionToMyMeals(m);
+                          }}
+                          aria-label="Save to My Meals"
+                          title="Save to My Meals"
+                        >
                           <Star size={12} />
                         </button>
                         <div className="suggested-emoji">{m.emoji}</div>
                         <div className="suggested-name">{m.name}</div>
-                        <div className="suggested-type">{(MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).label} · Serves {m.baseServings}</div>
+                        <div className="suggested-type">
+                          {
+                            (
+                              MEAL_TYPE_META[m.mealType] ||
+                              MEAL_TYPE_META.dinner
+                            ).label
+                          }{" "}
+                          · Serves {m.baseServings}
+                        </div>
                       </div>
                     ))}
                   </div>
                 )}
-                {!aiSuggestLoading && aiSuggestions.length === 0 && !aiSuggestError && (
-                  <div className="mp-empty">Describe what you're craving above and tap "Suggest" for AI meal ideas.</div>
-                )}
+                {!aiSuggestLoading &&
+                  aiSuggestions.length === 0 &&
+                  !aiSuggestError && (
+                    <div className="mp-empty">
+                      Describe what you're craving above and tap "Suggest" for
+                      AI meal ideas.
+                    </div>
+                  )}
               </>
             )}
 
@@ -1150,18 +1784,36 @@ export default function App() {
                     tabIndex={0}
                     key={m.id}
                     onClick={() => setPreviewMeal(m)}
-                    onKeyDown={(e) => { if (e.key === "Enter") setPreviewMeal(m); }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") setPreviewMeal(m);
+                    }}
                   >
-                    <button className="suggested-del" onClick={(e) => { e.stopPropagation(); deleteCustomMeal(m.id); }} aria-label="Delete meal">
+                    <button
+                      className="suggested-del"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteCustomMeal(m.id);
+                      }}
+                      aria-label="Delete meal"
+                    >
                       <Trash2 size={12} />
                     </button>
                     <div className="suggested-emoji">{m.emoji}</div>
                     <div className="suggested-name">{m.name}</div>
-                    <div className="suggested-type">{(MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner).label} · Serves {m.baseServings || 4}</div>
+                    <div className="suggested-type">
+                      {
+                        (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner)
+                          .label
+                      }{" "}
+                      · Serves {m.baseServings || 4}
+                    </div>
                   </div>
                 ))}
                 {customMeals.length === 0 && (
-                  <div className="mp-empty">You haven't saved any meals yet — create one in the "New meal" tab.</div>
+                  <div className="mp-empty">
+                    You haven't saved any meals yet — create one in the "New
+                    meal" tab.
+                  </div>
                 )}
               </div>
             )}
@@ -1169,55 +1821,153 @@ export default function App() {
             {modalTab === "new" && (
               <div>
                 <span className="mp-field-label">Meal name</span>
-                <input className="mp-input" style={{ marginBottom: 12 }} placeholder="e.g. Grandma's Meatloaf" value={newMealName} onChange={(e) => setNewMealName(e.target.value)} />
+                <input
+                  className="mp-input"
+                  style={{ marginBottom: 12 }}
+                  placeholder="e.g. Grandma's Meatloaf"
+                  value={newMealName}
+                  onChange={(e) => setNewMealName(e.target.value)}
+                />
 
                 <span className="mp-field-label">Icon</span>
                 <div className="emoji-row">
                   {EMOJI_CHOICES.map((em) => (
-                    <button key={em} className={`emoji-btn${newMealEmoji === em ? " selected" : ""}`} onClick={() => setNewMealEmoji(em)}>{em}</button>
+                    <button
+                      key={em}
+                      className={`emoji-btn${newMealEmoji === em ? " selected" : ""}`}
+                      onClick={() => setNewMealEmoji(em)}
+                    >
+                      {em}
+                    </button>
                   ))}
                 </div>
 
                 <span className="mp-field-label">Meal type</span>
-                <select className="mp-select" style={{ marginBottom: 14 }} value={newMealType} onChange={(e) => setNewMealType(e.target.value)}>
+                <select
+                  className="mp-select"
+                  style={{ marginBottom: 14 }}
+                  value={newMealType}
+                  onChange={(e) => setNewMealType(e.target.value)}
+                >
                   {Object.entries(MEAL_TYPE_META).map(([k, v]) => (
-                    <option key={k} value={k}>{v.label}</option>
+                    <option key={k} value={k}>
+                      {v.label}
+                    </option>
                   ))}
                 </select>
 
-                <span className="mp-field-label">Servings this recipe makes</span>
-                <input className="mp-input" style={{ marginBottom: 14, maxWidth: 120 }} type="number" min="1" max="99" value={newMealServings} onChange={(e) => setNewMealServings(Number(e.target.value) || 4)} />
+                <span className="mp-field-label">
+                  Servings this recipe makes
+                </span>
+                <input
+                  className="mp-input"
+                  style={{ marginBottom: 14, maxWidth: 120 }}
+                  type="number"
+                  min="1"
+                  max="99"
+                  value={newMealServings}
+                  onChange={(e) =>
+                    setNewMealServings(Number(e.target.value) || 4)
+                  }
+                />
 
-                <span className="mp-field-label">Ingredients (name / qty / unit / est. price / category)</span>
+                <span className="mp-field-label">
+                  Ingredients (name / qty / unit / est. price / category)
+                </span>
                 {newMealIngredients.map((row) => (
                   <div className="ing-row" key={row.rid}>
-                    <input className="mp-input" placeholder="Ingredient" value={row.name} onChange={(e) => updateIngredientRow(row.rid, "name", e.target.value)} />
-                    <input className="mp-input" type="number" min="0" placeholder="Qty" value={row.amount} onChange={(e) => updateIngredientRow(row.rid, "amount", e.target.value)} />
-                    <input className="mp-input" placeholder="unit" value={row.unit} onChange={(e) => updateIngredientRow(row.rid, "unit", e.target.value)} />
-                    <input className="mp-input" type="number" min="0" step="0.01" placeholder="$" value={row.price} onChange={(e) => updateIngredientRow(row.rid, "price", e.target.value)} />
-                    <select className="mp-select" value={row.category} onChange={(e) => updateIngredientRow(row.rid, "category", e.target.value)}>
+                    <input
+                      className="mp-input"
+                      placeholder="Ingredient"
+                      value={row.name}
+                      onChange={(e) =>
+                        updateIngredientRow(row.rid, "name", e.target.value)
+                      }
+                    />
+                    <input
+                      className="mp-input"
+                      type="number"
+                      min="0"
+                      placeholder="Qty"
+                      value={row.amount}
+                      onChange={(e) =>
+                        updateIngredientRow(row.rid, "amount", e.target.value)
+                      }
+                    />
+                    <input
+                      className="mp-input"
+                      placeholder="unit"
+                      value={row.unit}
+                      onChange={(e) =>
+                        updateIngredientRow(row.rid, "unit", e.target.value)
+                      }
+                    />
+                    <input
+                      className="mp-input"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="$"
+                      value={row.price}
+                      onChange={(e) =>
+                        updateIngredientRow(row.rid, "price", e.target.value)
+                      }
+                    />
+                    <select
+                      className="mp-select"
+                      value={row.category}
+                      onChange={(e) =>
+                        updateIngredientRow(row.rid, "category", e.target.value)
+                      }
+                    >
                       {CATEGORY_ORDER.map((c) => (
-                        <option key={c} value={c}>{CATEGORY_META[c].label}</option>
+                        <option key={c} value={c}>
+                          {CATEGORY_META[c].label}
+                        </option>
                       ))}
                     </select>
-                    <button className="ing-remove" onClick={() => removeIngredientRow(row.rid)} aria-label="Remove ingredient"><X size={16} /></button>
+                    <button
+                      className="ing-remove"
+                      onClick={() => removeIngredientRow(row.rid)}
+                      aria-label="Remove ingredient"
+                    >
+                      <X size={16} />
+                    </button>
                   </div>
                 ))}
-                <button className="mp-add-ing" onClick={() => setNewMealIngredients((prev) => [...prev, emptyIngredientRow()])}>
+                <button
+                  className="mp-add-ing"
+                  onClick={() =>
+                    setNewMealIngredients((prev) => [
+                      ...prev,
+                      emptyIngredientRow(),
+                    ])
+                  }
+                >
                   <Plus size={14} /> Add ingredient
                 </button>
 
-                <span className="mp-field-label">Cooking instructions (optional)</span>
+                <span className="mp-field-label">
+                  Cooking instructions (optional)
+                </span>
                 <textarea
                   className="mp-input"
-                  style={{ marginBottom: 14, minHeight: 90, resize: "vertical", fontFamily: "inherit" }}
+                  style={{
+                    marginBottom: 14,
+                    minHeight: 90,
+                    resize: "vertical",
+                    fontFamily: "inherit",
+                  }}
                   placeholder="1. Preheat oven to 400°F...&#10;2. ..."
                   value={newMealInstructionsInput}
                   onChange={(e) => setNewMealInstructionsInput(e.target.value)}
                 />
 
                 <button className="mp-primary-btn" onClick={submitNewMeal}>
-                  <Sparkles size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />
+                  <Sparkles
+                    size={14}
+                    style={{ marginRight: 6, verticalAlign: "-2px" }}
+                  />
                   Save & add to day
                 </button>
               </div>
@@ -1227,50 +1977,113 @@ export default function App() {
       )}
 
       {showShoppingList && (
-        <div className="mp-overlay" style={{ background: "rgba(8,4,16,0.55)" }} onClick={() => setShowShoppingList(false)}>
+        <div
+          className="mp-overlay"
+          style={{ background: "rgba(8,4,16,0.55)" }}
+          onClick={() => setShowShoppingList(false)}
+        >
           <div className="receipt-panel" onClick={(e) => e.stopPropagation()}>
             <div className="receipt-header">
               <div>
-                <div className="mp-display" style={{ fontSize: "1.1rem", fontWeight: 700 }}>Shopping list</div>
-                <div className="mp-mono" style={{ fontSize: "0.72rem", opacity: 0.8, marginTop: 4 }}>
-                  {viewMode === "week" ? formatRange(weekStart) : formatMonthLabel(monthAnchor)}
+                <div
+                  className="mp-display"
+                  style={{ fontSize: "1.1rem", fontWeight: 700 }}
+                >
+                  Shopping list
+                </div>
+                <div
+                  className="mp-mono"
+                  style={{ fontSize: "0.72rem", opacity: 0.8, marginTop: 4 }}
+                >
+                  {viewMode === "week"
+                    ? formatRange(weekStart)
+                    : formatMonthLabel(monthAnchor)}
                 </div>
               </div>
-              <button className="mp-close-btn" onClick={() => setShowShoppingList(false)}><X size={16} /></button>
+              <button
+                className="mp-close-btn"
+                onClick={() => setShowShoppingList(false)}
+              >
+                <X size={16} />
+              </button>
             </div>
-            <div className="receipt-disclaimer">Prices are rough estimated U.S. averages — actual cost will vary by store.</div>
+            <div className="receipt-disclaimer">
+              Prices are rough estimated U.S. averages — actual cost will vary
+              by store.
+            </div>
             <div className="receipt-content">
               {shoppingList.length === 0 ? (
-                <div className="mp-empty">No meals planned yet for this range. Add meals to build a list.</div>
+                <div className="mp-empty">
+                  No meals planned yet for this range. Add meals to build a
+                  list.
+                </div>
               ) : (
                 shoppingList.map((cat) => (
                   <div key={cat.category}>
                     <div className="receipt-cat-header">
-                      <span>{CATEGORY_META[cat.category].emoji} {CATEGORY_META[cat.category].label}</span>
-                      <span>{cat.categoryTotal > 0 ? `$${cat.categoryTotal.toFixed(2)}` : ""}</span>
+                      <span>
+                        {CATEGORY_META[cat.category].emoji}{" "}
+                        {CATEGORY_META[cat.category].label}
+                      </span>
+                      <span>
+                        {cat.categoryTotal > 0
+                          ? `$${cat.categoryTotal.toFixed(2)}`
+                          : ""}
+                      </span>
                     </div>
                     {cat.items.map((item) => {
                       const itemKey = `${cat.category}|${item.name.toLowerCase()}|${item.unit.toLowerCase()}`;
                       const isChecked = checked.has(itemKey);
-                      const hasPurchase = item.purchaseItem && item.packagesNeeded !== null;
-                      const fallbackBuyAs = hasPurchase ? null : storePurchaseFor(item.name, item.amount, item.unit);
-                      const lineTotal = item.purchaseCost !== null ? item.purchaseCost : item.priceCount > 0 ? item.priceSum : null;
+                      const hasPurchase =
+                        item.purchaseItem && item.packagesNeeded !== null;
+                      const fallbackBuyAs = hasPurchase
+                        ? null
+                        : storePurchaseFor(item.name, item.amount, item.unit);
+                      const lineTotal =
+                        item.purchaseCost !== null
+                          ? item.purchaseCost
+                          : item.priceCount > 0
+                            ? item.priceSum
+                            : null;
                       return (
                         <div key={itemKey}>
-                          <div className={`receipt-line${isChecked ? " done" : ""}`} onClick={() => toggleChecked(itemKey)}>
-                            <span className={`receipt-check${isChecked ? " on" : ""}`}>{isChecked && <Check size={10} />}</span>
+                          <div
+                            className={`receipt-line${isChecked ? " done" : ""}`}
+                            onClick={() => toggleChecked(itemKey)}
+                          >
+                            <span
+                              className={`receipt-check${isChecked ? " on" : ""}`}
+                            >
+                              {isChecked && <Check size={10} />}
+                            </span>
                             <span className="receipt-name">{item.name}</span>
                             <span className="receipt-dots" />
-                            <span className="receipt-qty">{item.amount !== null ? `${formatAmount(item.amount)}${item.unit ? " " + item.unit : ""}` : (item.unit || "—")}</span>
+                            <span className="receipt-qty">
+                              {item.amount !== null
+                                ? `${formatAmount(item.amount)}${item.unit ? " " + item.unit : ""}`
+                                : item.unit || "—"}
+                            </span>
                           </div>
                           <div className="receipt-price-line">
                             {hasPurchase && (
                               <span className="receipt-buy-as">
-                                buy: {item.packagesNeeded > 1 ? `${item.packagesNeeded}× ` : ""}{item.purchaseItem}
+                                buy:{" "}
+                                {item.packagesNeeded > 1
+                                  ? `${item.packagesNeeded}× `
+                                  : ""}
+                                {item.purchaseItem}
                               </span>
                             )}
-                            {fallbackBuyAs && <span className="receipt-buy-as">buy: {fallbackBuyAs}</span>}
-                            <span className="receipt-line-total">{lineTotal !== null ? `$${lineTotal.toFixed(2)}` : "—"}</span>
+                            {fallbackBuyAs && (
+                              <span className="receipt-buy-as">
+                                buy: {fallbackBuyAs}
+                              </span>
+                            )}
+                            <span className="receipt-line-total">
+                              {lineTotal !== null
+                                ? `$${lineTotal.toFixed(2)}`
+                                : "—"}
+                            </span>
                           </div>
                         </div>
                       );
@@ -1285,10 +2098,14 @@ export default function App() {
                   <span key={i} style={{ width: w + "px" }} />
                 ))}
               </div>
-              <div className="receipt-grand-total">Estimated total: ${grandTotal.toFixed(2)}</div>
+              <div className="receipt-grand-total">
+                Estimated total: ${grandTotal.toFixed(2)}
+              </div>
               <div className="receipt-grand-note">
                 {totalItems} item{totalItems === 1 ? "" : "s"}
-                {itemsWithoutPrice > 0 ? ` · ${itemsWithoutPrice} without price data (not included above)` : ""}
+                {itemsWithoutPrice > 0
+                  ? ` · ${itemsWithoutPrice} without price data (not included above)`
+                  : ""}
               </div>
             </div>
           </div>
@@ -1297,10 +2114,24 @@ export default function App() {
 
       {showSettings && (
         <div className="mp-overlay" onClick={() => setShowSettings(false)}>
-          <div className="mp-modal" style={{ maxWidth: 460 }} onClick={(e) => e.stopPropagation()}>
+          <div
+            className="mp-modal"
+            style={{ maxWidth: 460 }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mp-modal-head">
-              <div className="mp-display" style={{ fontSize: "1.2rem", fontWeight: 600 }}>Settings</div>
-              <button className="mp-close-btn" onClick={() => setShowSettings(false)}><X size={16} /></button>
+              <div
+                className="mp-display"
+                style={{ fontSize: "1.2rem", fontWeight: 600 }}
+              >
+                Settings
+              </div>
+              <button
+                className="mp-close-btn"
+                onClick={() => setShowSettings(false)}
+              >
+                <X size={16} />
+              </button>
             </div>
 
             <div className="settings-section">
@@ -1308,16 +2139,28 @@ export default function App() {
                 <KeyRound size={15} /> AI assistant
               </div>
               <div className="settings-desc">
-                This app tries a local Ollama model first, and falls back to Google Gemini's free API when Ollama
-                isn't available (like on a phone). Your key is stored only on this device and never leaves it except
-                to talk to Google directly.
+                This app uses Google Gemini's free API for meal suggestions
+                and cooking questions. Your key is stored only on this device
+                and never leaves it except to talk to Google directly.
               </div>
 
               {geminiKeySaved && !keyEditing ? (
                 <div className="settings-key-row">
-                  <span className="settings-key-pill"><Check size={13} /> Gemini key saved</span>
-                  <button className="settings-link-btn" onClick={() => setKeyEditing(true)}>Change</button>
-                  <button className="settings-link-btn danger" onClick={removeSavedKey}>Remove</button>
+                  <span className="settings-key-pill">
+                    <Check size={13} /> Gemini key saved
+                  </span>
+                  <button
+                    className="settings-link-btn"
+                    onClick={() => setKeyEditing(true)}
+                  >
+                    Change
+                  </button>
+                  <button
+                    className="settings-link-btn danger"
+                    onClick={removeSavedKey}
+                  >
+                    Remove
+                  </button>
                 </div>
               ) : (
                 <>
@@ -1328,33 +2171,71 @@ export default function App() {
                       onChange={(e) => setKeyInputValue(e.target.value)}
                       placeholder="Paste your Gemini API key…"
                     />
-                    <button className="mp-primary-btn ai-test-btn" onClick={saveKeyFromSettings}>Save</button>
+                    <button
+                      className="mp-primary-btn ai-test-btn"
+                      onClick={saveKeyFromSettings}
+                    >
+                      Save
+                    </button>
                   </div>
-                  <a className="settings-get-key-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
-                    Get a free key at aistudio.google.com/apikey →
-                  </a>
+                  <button
+                    type="button"
+                    className="settings-get-key-link"
+                    onClick={copyGeminiApiKeyLink}
+                  >
+                    Copy Gemini API key link
+                  </button>
                 </>
               )}
-              {keyStatusMsg && <div className="settings-status-msg">{keyStatusMsg}</div>}
+              {keyStatusMsg && (
+                <div className="settings-status-msg">{keyStatusMsg}</div>
+              )}
             </div>
           </div>
         </div>
       )}
 
       {previewMeal && (
-        <div className="mp-overlay" style={{ zIndex: 65 }} onClick={() => setPreviewMeal(null)}>
-          <div className="mp-modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+        <div
+          className="mp-overlay"
+          style={{ zIndex: 65 }}
+          onClick={() => setPreviewMeal(null)}
+        >
+          <div
+            className="mp-modal"
+            style={{ maxWidth: 520 }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mp-modal-head">
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ fontSize: "1.8rem" }}>{previewMeal.emoji}</span>
                 <div>
-                  <div className="mp-display" style={{ fontSize: "1.2rem", fontWeight: 700 }}>{previewMeal.name}</div>
-                  <div className="mp-mono" style={{ fontSize: "0.7rem", opacity: 0.7, marginTop: 2 }}>
-                    {(MEAL_TYPE_META[previewMeal.mealType] || MEAL_TYPE_META.dinner).label} · Serves {previewMeal.baseServings || 4}
+                  <div
+                    className="mp-display"
+                    style={{ fontSize: "1.2rem", fontWeight: 700 }}
+                  >
+                    {previewMeal.name}
+                  </div>
+                  <div
+                    className="mp-mono"
+                    style={{ fontSize: "0.7rem", opacity: 0.7, marginTop: 2 }}
+                  >
+                    {
+                      (
+                        MEAL_TYPE_META[previewMeal.mealType] ||
+                        MEAL_TYPE_META.dinner
+                      ).label
+                    }{" "}
+                    · Serves {previewMeal.baseServings || 4}
                   </div>
                 </div>
               </div>
-              <button className="mp-close-btn" onClick={() => setPreviewMeal(null)}><X size={16} /></button>
+              <button
+                className="mp-close-btn"
+                onClick={() => setPreviewMeal(null)}
+              >
+                <X size={16} />
+              </button>
             </div>
 
             <div className="detail-section-title">Ingredients</div>
@@ -1364,19 +2245,30 @@ export default function App() {
                   <span className="detail-ing-name">{ing.name}</span>
                   <span className="receipt-dots" />
                   <span className="detail-ing-qty">
-                    {ing.amount !== null && ing.amount !== undefined && !isNaN(Number(ing.amount))
+                    {ing.amount !== null &&
+                    ing.amount !== undefined &&
+                    !isNaN(Number(ing.amount))
                       ? `${formatAmount(Number(ing.amount))}${ing.unit ? " " + ing.unit : ""}`
-                      : (ing.unit || "—")}
+                      : ing.unit || "—"}
                   </span>
                 </div>
               ))}
-              {(previewMeal.ingredients || []).length === 0 && <div className="mp-empty">No ingredients listed.</div>}
+              {(previewMeal.ingredients || []).length === 0 && (
+                <div className="mp-empty">No ingredients listed.</div>
+              )}
             </div>
 
             {previewMeal.instructions && (
               <>
-                <div className="detail-section-title" style={{ marginTop: 16 }}>Instructions</div>
-                <div className="detail-instructions" style={{ maxHeight: 200, overflowY: "auto" }}>{previewMeal.instructions}</div>
+                <div className="detail-section-title" style={{ marginTop: 16 }}>
+                  Instructions
+                </div>
+                <div
+                  className="detail-instructions"
+                  style={{ maxHeight: 200, overflowY: "auto" }}
+                >
+                  {previewMeal.instructions}
+                </div>
               </>
             )}
 
@@ -1384,12 +2276,22 @@ export default function App() {
               <button
                 className="mp-primary-btn"
                 style={{ flex: 1 }}
-                onClick={() => { addMealToDay(activeDayKey, previewMeal); setPreviewMeal(null); }}
+                onClick={() => {
+                  addMealToDay(activeDayKey, previewMeal);
+                  setPreviewMeal(null);
+                }}
               >
-                <Plus size={14} style={{ marginRight: 6, verticalAlign: "-2px" }} />
+                <Plus
+                  size={14}
+                  style={{ marginRight: 6, verticalAlign: "-2px" }}
+                />
                 Add to {activeDayLabel || "this day"}
               </button>
-              <button className="mp-secondary-btn" style={{ width: "auto", padding: "0 18px" }} onClick={() => setPreviewMeal(null)}>
+              <button
+                className="mp-secondary-btn"
+                style={{ width: "auto", padding: "0 18px" }}
+                onClick={() => setPreviewMeal(null)}
+              >
                 Cancel
               </button>
             </div>
@@ -1398,48 +2300,117 @@ export default function App() {
       )}
 
       {detailMeal && detailMealData && (
-        <div className="mp-overlay" onClick={() => { setDetailMeal(null); setDetailInstructionsError(""); }}>
-          <div className="mp-modal" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+        <div
+          className="mp-overlay"
+          onClick={() => {
+            setDetailMeal(null);
+            setDetailInstructionsError("");
+          }}
+        >
+          <div
+            className="mp-modal"
+            style={{ maxWidth: 520 }}
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="mp-modal-head">
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: "1.8rem" }}>{detailMealData.emoji}</span>
+                <span style={{ fontSize: "1.8rem" }}>
+                  {detailMealData.emoji}
+                </span>
                 <div>
-                  <div className="mp-display" style={{ fontSize: "1.2rem", fontWeight: 700 }}>{detailMealData.name}</div>
-                  <div className="mp-mono" style={{ fontSize: "0.7rem", opacity: 0.7, marginTop: 2 }}>
-                    {detailMealDayLabel} · {(MEAL_TYPE_META[detailMealData.mealType] || MEAL_TYPE_META.dinner).label} · {detailMealData.servings || detailMealData.baseServings || 4} servings
+                  <div
+                    className="mp-display"
+                    style={{ fontSize: "1.2rem", fontWeight: 700 }}
+                  >
+                    {detailMealData.name}
+                  </div>
+                  <div
+                    className="mp-mono"
+                    style={{ fontSize: "0.7rem", opacity: 0.7, marginTop: 2 }}
+                  >
+                    {detailMealDayLabel} ·{" "}
+                    {
+                      (
+                        MEAL_TYPE_META[detailMealData.mealType] ||
+                        MEAL_TYPE_META.dinner
+                      ).label
+                    }{" "}
+                    ·{" "}
+                    {detailMealData.servings ||
+                      detailMealData.baseServings ||
+                      4}{" "}
+                    servings
                   </div>
                 </div>
               </div>
-              <button className="mp-close-btn" onClick={() => { setDetailMeal(null); setDetailInstructionsError(""); }}><X size={16} /></button>
+              <button
+                className="mp-close-btn"
+                onClick={() => {
+                  setDetailMeal(null);
+                  setDetailInstructionsError("");
+                }}
+              >
+                <X size={16} />
+              </button>
             </div>
 
             <div className="detail-section-title">Ingredients</div>
             <div className="detail-ingredients">
               {(detailMealData.ingredients || []).map((ing, i) => {
-                const scale = detailMealData.baseServings ? (detailMealData.servings || detailMealData.baseServings) / detailMealData.baseServings : 1;
-                const scaledAmount = ing.amount !== null && ing.amount !== undefined && !isNaN(Number(ing.amount)) ? Number(ing.amount) * scale : null;
+                const scale = detailMealData.baseServings
+                  ? (detailMealData.servings || detailMealData.baseServings) /
+                    detailMealData.baseServings
+                  : 1;
+                const scaledAmount =
+                  ing.amount !== null &&
+                  ing.amount !== undefined &&
+                  !isNaN(Number(ing.amount))
+                    ? Number(ing.amount) * scale
+                    : null;
                 return (
                   <div className="detail-ing-row" key={i}>
                     <span className="detail-ing-name">{ing.name}</span>
                     <span className="receipt-dots" />
-                    <span className="detail-ing-qty">{scaledAmount !== null ? `${formatAmount(scaledAmount)}${ing.unit ? " " + ing.unit : ""}` : (ing.unit || "—")}</span>
+                    <span className="detail-ing-qty">
+                      {scaledAmount !== null
+                        ? `${formatAmount(scaledAmount)}${ing.unit ? " " + ing.unit : ""}`
+                        : ing.unit || "—"}
+                    </span>
                   </div>
                 );
               })}
-              {(detailMealData.ingredients || []).length === 0 && <div className="mp-empty">No ingredients recorded for this meal.</div>}
+              {(detailMealData.ingredients || []).length === 0 && (
+                <div className="mp-empty">
+                  No ingredients recorded for this meal.
+                </div>
+              )}
             </div>
 
-            <div className="detail-section-title" style={{ marginTop: 16 }}>Instructions</div>
+            <div className="detail-section-title" style={{ marginTop: 16 }}>
+              Instructions
+            </div>
             {detailMealData.instructions ? (
-              <div className="detail-instructions">{detailMealData.instructions}</div>
+              <div className="detail-instructions">
+                {detailMealData.instructions}
+              </div>
             ) : (
               <div>
                 <div className="settings-desc" style={{ marginBottom: 10 }}>
                   This meal doesn't have instructions saved yet.
                 </div>
-                {detailInstructionsError && <div className="mp-warning" style={{ margin: "0 0 10px" }}>{detailInstructionsError}</div>}
-                <button className="mp-primary-btn" onClick={fetchInstructionsForDetail} disabled={detailInstructionsLoading}>
-                  {detailInstructionsLoading ? "Generating…" : "✨ Generate instructions with AI"}
+                {detailInstructionsError && (
+                  <div className="mp-warning" style={{ margin: "0 0 10px" }}>
+                    {detailInstructionsError}
+                  </div>
+                )}
+                <button
+                  className="mp-primary-btn"
+                  onClick={fetchInstructionsForDetail}
+                  disabled={detailInstructionsLoading}
+                >
+                  {detailInstructionsLoading
+                    ? "Generating…"
+                    : "✨ Generate instructions with AI"}
                 </button>
               </div>
             )}
@@ -1448,23 +2419,51 @@ export default function App() {
       )}
 
       {showAskAI && (
-        <div className="mp-overlay" style={{ background: "rgba(8,4,16,0.55)" }} onClick={() => setShowAskAI(false)}>
+        <div
+          className="mp-overlay"
+          style={{ background: "rgba(8,4,16,0.55)" }}
+          onClick={() => setShowAskAI(false)}
+        >
           <div className="ask-panel" onClick={(e) => e.stopPropagation()}>
             <div className="receipt-header">
               <div>
-                <div className="mp-display" style={{ fontSize: "1.1rem", fontWeight: 700 }}>Ask AI</div>
-                <div className="mp-mono" style={{ fontSize: "0.72rem", opacity: 0.8, marginTop: 4 }}>Cooking questions, ideas, substitutions…</div>
+                <div
+                  className="mp-display"
+                  style={{ fontSize: "1.1rem", fontWeight: 700 }}
+                >
+                  Ask AI
+                </div>
+                <div
+                  className="mp-mono"
+                  style={{ fontSize: "0.72rem", opacity: 0.8, marginTop: 4 }}
+                >
+                  Cooking questions, ideas, substitutions…
+                </div>
               </div>
-              <button className="mp-close-btn" onClick={() => setShowAskAI(false)}><X size={16} /></button>
+              <button
+                className="mp-close-btn"
+                onClick={() => setShowAskAI(false)}
+              >
+                <X size={16} />
+              </button>
             </div>
             <div className="ask-messages">
               {askMessages.length === 0 && (
-                <div className="mp-empty">Ask anything — "what can I sub for buttermilk?", "how long do I roast a whole chicken?", etc.</div>
+                <div className="mp-empty">
+                  Ask anything — "what can I sub for buttermilk?", "how long do
+                  I roast a whole chicken?", etc.
+                </div>
               )}
               {askMessages.map((m, i) => (
-                <div key={i} className={`ask-msg ask-msg-${m.role}`}>{m.text}</div>
+                <div key={i} className={`ask-msg ask-msg-${m.role}`}>
+                  {m.text}
+                </div>
               ))}
-              {askSending && <div className="ask-msg ask-msg-assistant ask-msg-loading">Thinking…</div>}
+              {askSending && (
+                <div className="ask-msg ask-msg-assistant ask-msg-loading">
+                  Thinking…
+                </div>
+              )}
             </div>
             <div className="ask-input-row">
               <input
@@ -1472,9 +2471,17 @@ export default function App() {
                 value={askInput}
                 onChange={(e) => setAskInput(e.target.value)}
                 placeholder="Ask a question…"
-                onKeyDown={(e) => { if (e.key === "Enter") sendAskMessage(); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") sendAskMessage();
+                }}
               />
-              <button className="mp-primary-btn ai-test-btn" onClick={sendAskMessage} disabled={askSending}>Send</button>
+              <button
+                className="mp-primary-btn ai-test-btn"
+                onClick={sendAskMessage}
+                disabled={askSending}
+              >
+                Send
+              </button>
             </div>
           </div>
         </div>
@@ -1483,13 +2490,20 @@ export default function App() {
       {showOnboarding && (
         <div className="mp-overlay" style={{ zIndex: 90 }}>
           <div className="mp-modal" style={{ maxWidth: 440 }}>
-            <div className="mp-display" style={{ fontSize: "1.3rem", fontWeight: 700, marginBottom: 10 }}>🍽️ Welcome!</div>
-            <div className="settings-desc" style={{ marginBottom: 16 }}>
-              This app can suggest meals and answer cooking questions using AI. It tries a local Ollama model first
-              (if you have one running), and falls back to Google Gemini's free API otherwise — handy on phones or
-              machines without Ollama.
+            <div
+              className="mp-display"
+              style={{ fontSize: "1.3rem", fontWeight: 700, marginBottom: 10 }}
+            >
+              🍽️ Welcome!
             </div>
-            <span className="mp-field-label">Add a free Gemini key to enable this everywhere</span>
+            <div className="settings-desc" style={{ marginBottom: 16 }}>
+              This app can suggest meals and answer cooking questions using
+              Google Gemini's free API. Add your own free API key to enable AI
+              features on this device.
+            </div>
+            <span className="mp-field-label">
+              Add a free Gemini key to enable this everywhere
+            </span>
             <div className="ai-test-row" style={{ margin: "8px 0" }}>
               <input
                 className="mp-input"
@@ -1497,13 +2511,28 @@ export default function App() {
                 onChange={(e) => setOnboardingKeyInput(e.target.value)}
                 placeholder="Paste your Gemini API key…"
               />
-              <button className="mp-primary-btn ai-test-btn" onClick={saveKeyFromOnboarding}>Save</button>
+              <button
+                className="mp-primary-btn ai-test-btn"
+                onClick={saveKeyFromOnboarding}
+              >
+                Save
+              </button>
             </div>
-            <a className="settings-get-key-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">
-              Get a free key at aistudio.google.com/apikey →
-            </a>
-            {onboardingStatusMsg && <div className="settings-status-msg">{onboardingStatusMsg}</div>}
-            <button className="settings-link-btn" style={{ marginTop: 16, display: "block" }} onClick={dismissOnboarding}>
+            <button
+              type="button"
+              className="settings-get-key-link"
+              onClick={copyGeminiApiKeyLink}
+            >
+              Copy Gemini API key link
+            </button>
+            {onboardingStatusMsg && (
+              <div className="settings-status-msg">{onboardingStatusMsg}</div>
+            )}
+            <button
+              className="settings-link-btn"
+              style={{ marginTop: 16, display: "block" }}
+              onClick={dismissOnboarding}
+            >
               Skip for now — I'll add this later in Settings
             </button>
           </div>
