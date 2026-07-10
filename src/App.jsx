@@ -426,101 +426,116 @@ function storePurchaseFor(name, amount, unit) {
 
 function buildShoppingList(assignments, includeKeys) {
   const includeSet = new Set(includeKeys);
-  const buckets = {};
-  Object.entries(assignments).forEach(([dKey, mealsForDay]) => {
-    if (!includeSet.has(dKey)) return;
-    (mealsForDay || []).forEach((meal) => {
-      const scale = meal.baseServings
-        ? (meal.servings || meal.baseServings) / meal.baseServings
-        : 1;
-      (meal.ingredients || []).forEach((ing) => {
-        const category = CATEGORY_ORDER.includes(ing.category)
-          ? ing.category
-          : "other";
-        const unit = (ing.unit || "").trim();
-        const name = (ing.name || "").trim();
-        if (!name) return;
-        const key = name.toLowerCase() + "|" + unit.toLowerCase();
-        if (!buckets[category]) buckets[category] = {};
-        const amountNum =
-          ing.amount === "" ||
-          ing.amount === null ||
-          ing.amount === undefined ||
-          isNaN(Number(ing.amount))
-            ? null
-            : Number(ing.amount) * scale;
-        const priceNum =
-          ing.price === "" ||
-          ing.price === null ||
-          ing.price === undefined ||
-          isNaN(Number(ing.price))
-            ? null
-            : Number(ing.price) * scale;
-        if (!buckets[category][key]) {
-          buckets[category][key] = {
-            name,
-            unit,
-            amount: amountNum,
-            priceSum: priceNum !== null ? priceNum : 0,
-            priceCount: priceNum !== null ? 1 : 0,
-            purchaseItem: ing.purchaseItem || null,
-            purchaseAmount: ing.purchaseAmount || null,
-            purchasePrice: ing.purchasePrice ?? null,
-          };
-        } else {
-          const existing = buckets[category][key];
-          existing.amount =
-            existing.amount !== null && amountNum !== null
-              ? existing.amount + amountNum
-              : null;
-          if (priceNum !== null) {
-            existing.priceSum += priceNum;
-            existing.priceCount += 1;
-          }
-          // keep the first purchase info seen; fill in if this one has it and the existing doesn't
-          if (!existing.purchaseItem && ing.purchaseItem) {
-            existing.purchaseItem = ing.purchaseItem;
-            existing.purchaseAmount = ing.purchaseAmount || null;
-            existing.purchasePrice = ing.purchasePrice ?? null;
-          }
-        }
+  const mealGroups = [];
+
+  Object.entries(assignments)
+    .filter(([dKey]) => includeSet.has(dKey))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .forEach(([dKey, mealsForDay]) => {
+      const dayLabel = new Date(dKey + "T00:00:00").toLocaleDateString("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+
+      (mealsForDay || []).forEach((meal, mealIndex) => {
+        const scale = meal.baseServings
+          ? (meal.servings || meal.baseServings) / meal.baseServings
+          : 1;
+
+        const items = (meal.ingredients || [])
+          .map((ing, ingredientIndex) => {
+            const category = CATEGORY_ORDER.includes(ing.category)
+              ? ing.category
+              : "other";
+            const unit = (ing.unit || "").trim();
+            const name = (ing.name || "").trim();
+            if (!name) return null;
+
+            const amountNum =
+              ing.amount === "" ||
+              ing.amount === null ||
+              ing.amount === undefined ||
+              isNaN(Number(ing.amount))
+                ? null
+                : Number(ing.amount) * scale;
+
+            const priceNum =
+              ing.price === "" ||
+              ing.price === null ||
+              ing.price === undefined ||
+              isNaN(Number(ing.price))
+                ? null
+                : Number(ing.price) * scale;
+
+            let packagesNeeded = null;
+            if (ing.purchaseItem) {
+              if (ing.purchaseAmount && amountNum !== null) {
+                packagesNeeded = Math.max(
+                  1,
+                  Math.ceil(amountNum / ing.purchaseAmount),
+                );
+              } else {
+                packagesNeeded = 1;
+              }
+            }
+
+            const purchaseCost =
+              packagesNeeded !== null && ing.purchasePrice !== null && ing.purchasePrice !== undefined
+                ? packagesNeeded * ing.purchasePrice
+                : null;
+
+            const lineTotal =
+              purchaseCost !== null
+                ? purchaseCost
+                : priceNum !== null
+                  ? priceNum
+                  : null;
+
+            return {
+              id: `${dKey}|${meal.instanceId || meal.name}|${ingredientIndex}`,
+              name,
+              unit,
+              category,
+              amount: amountNum,
+              price: priceNum,
+              purchaseItem: ing.purchaseItem || null,
+              purchaseAmount: ing.purchaseAmount || null,
+              purchasePrice: ing.purchasePrice ?? null,
+              packagesNeeded,
+              purchaseCost,
+              lineTotal,
+              mealName: meal.name || "Meal",
+              mealEmoji: meal.emoji || "🍽️",
+            };
+          })
+          .filter(Boolean)
+          .sort((a, b) => {
+            const categorySort = CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category);
+            if (categorySort !== 0) return categorySort;
+            return a.name.localeCompare(b.name);
+          });
+
+        const mealTotal = items.reduce(
+          (sum, item) => sum + (item.lineTotal !== null ? item.lineTotal : 0),
+          0,
+        );
+
+        mealGroups.push({
+          id: `${dKey}|${meal.instanceId || meal.name || mealIndex}`,
+          dayKey: dKey,
+          dayLabel,
+          mealName: meal.name || "Meal",
+          mealEmoji: meal.emoji || "🍽️",
+          mealType: meal.mealType || "dinner",
+          servings: meal.servings || meal.baseServings || 4,
+          items,
+          mealTotal,
+        });
       });
     });
-  });
-  return CATEGORY_ORDER.filter((c) => buckets[c]).map((c) => {
-    const items = Object.values(buckets[c])
-      .map((it) => {
-        // Work out how many store packages cover the needed amount.
-        let packagesNeeded = null;
-        if (it.purchaseItem) {
-          if (it.purchaseAmount && it.amount !== null) {
-            packagesNeeded = Math.max(
-              1,
-              Math.ceil(it.amount / it.purchaseAmount),
-            );
-          } else {
-            packagesNeeded = 1;
-          }
-        }
-        const purchaseCost =
-          packagesNeeded !== null && it.purchasePrice !== null
-            ? packagesNeeded * it.purchasePrice
-            : null;
-        return { ...it, packagesNeeded, purchaseCost };
-      })
-      .sort((a, b) => a.name.localeCompare(b.name));
-    const categoryTotal = items.reduce(
-      (s, it) =>
-        s +
-        (it.purchaseCost !== null
-          ? it.purchaseCost
-          : it.priceCount > 0
-            ? it.priceSum
-            : 0),
-      0,
-    );
-    return { category: c, items, categoryTotal };
-  });
+
+  return mealGroups;
 }
 
 
@@ -1200,18 +1215,16 @@ export default function App() {
     [assignments, rangeDateKeys],
   );
   const totalItems = shoppingList.reduce(
-    (sum, cat) => sum + cat.items.length,
+    (sum, mealGroup) => sum + mealGroup.items.length,
     0,
   );
   const grandTotal = shoppingList.reduce(
-    (sum, cat) => sum + cat.categoryTotal,
+    (sum, mealGroup) => sum + mealGroup.mealTotal,
     0,
   );
   const itemsWithoutPrice = shoppingList.reduce(
-    (sum, cat) =>
-      sum +
-      cat.items.filter((it) => it.purchaseCost === null && it.priceCount === 0)
-        .length,
+    (sum, mealGroup) =>
+      sum + mealGroup.items.filter((it) => it.lineTotal === null).length,
     0,
   );
   const hasRangeMeals = rangeDateKeys.some(
@@ -1718,15 +1731,24 @@ export default function App() {
         .receipt-print-btn:hover { background:rgba(45,226,230,0.2); }
         .receipt-disclaimer { font-size:0.72rem; color:var(--text-dim); padding: 10px 22px 0; }
         .receipt-content { flex:1; overflow-y:auto; padding:12px 22px 10px; background-image: repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0 2px, transparent 2px 4px); }
-        .receipt-cat-header { font-family:Arial, "Helvetica Neue", Helvetica, sans-serif; text-transform:uppercase; letter-spacing:0.04em; font-size:0.76rem; font-weight:800; margin-top:16px; margin-bottom:8px; color:var(--cyan); text-shadow:none; border-bottom:1px solid rgba(255,255,255,0.18); padding-bottom:6px; display:flex; justify-content:space-between; }
-        .receipt-cat-header:first-child { margin-top:0; }
-        .receipt-line { display:flex; align-items:baseline; gap:7px; padding:7px 0 0; cursor:pointer; font-family:Arial, "Helvetica Neue", Helvetica, sans-serif; font-size:0.96rem; font-weight:500; line-height:1.42; letter-spacing:0; }
+        .receipt-meal-group { border:1px solid rgba(255,255,255,0.12); background:rgba(255,255,255,0.035); border-radius:12px; padding:10px 10px 8px; margin-bottom:12px; }
+        .receipt-meal-header { display:flex; align-items:flex-start; justify-content:space-between; gap:10px; border-bottom:1px solid rgba(255,255,255,0.14); padding-bottom:8px; margin-bottom:5px; }
+        .receipt-meal-title { font-size:0.95rem; font-weight:800; line-height:1.25; color:var(--text); }
+        .receipt-meal-meta { font-size:0.72rem; color:var(--text-dim); margin-top:2px; }
+        .receipt-meal-total { color:var(--sun-core); font-weight:800; white-space:nowrap; font-size:0.86rem; }
+        .receipt-line { display:flex; align-items:baseline; gap:7px; padding:7px 0 0; cursor:pointer; font-family:Arial, "Helvetica Neue", Helvetica, sans-serif; font-size:0.92rem; font-weight:500; line-height:1.42; letter-spacing:0; }
         .receipt-check { width:14px; height:14px; border:1.5px solid var(--text); border-radius:3px; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
         .receipt-check.on { background:var(--magenta); border-color:var(--magenta); color:#fff; }
         .receipt-dots { flex:1; border-bottom:1px dotted rgba(255,255,255,0.3); margin-bottom:4px; min-width:8px; }
-        .receipt-line.done .receipt-name, .receipt-line.done .receipt-qty { text-decoration:line-through; opacity:0.4; }
-        .receipt-price-line { display:flex; justify-content:flex-end; gap:10px; font-family:Arial, "Helvetica Neue", Helvetica, sans-serif; font-size:0.8rem; color:var(--text-dim); padding:1px 0 9px 22px; }
+        .receipt-line.done .receipt-name, .receipt-line.done .receipt-qty, .receipt-line.done .receipt-meal-tag { text-decoration:line-through; opacity:0.4; }
+        .receipt-name-wrap { display:flex; flex-direction:column; min-width:0; }
+        .receipt-name { word-break:break-word; }
+        .receipt-meal-tag { color:var(--text-dim); font-size:0.72rem; margin-top:1px; }
+        .receipt-category-pill { align-self:flex-start; color:var(--cyan); border:1px solid rgba(45,226,230,0.22); background:rgba(45,226,230,0.08); border-radius:999px; padding:1px 6px; font-size:0.64rem; font-weight:800; text-transform:uppercase; letter-spacing:0.04em; margin-top:2px; }
+        .receipt-price-line { display:flex; justify-content:flex-end; gap:10px; font-family:Arial, "Helvetica Neue", Helvetica, sans-serif; font-size:0.78rem; color:var(--text-dim); padding:1px 0 8px 22px; }
         .receipt-buy-as { margin-right:auto; color:var(--cyan); }
+        .receipt-meal-subtotal { display:flex; justify-content:space-between; border-top:1px dashed rgba(255,255,255,0.14); margin-top:8px; padding-top:8px; font-size:0.8rem; color:var(--text-dim); }
+        .receipt-meal-subtotal strong { color:var(--sun-core); }
         .meal-name-link { cursor:pointer; }
         .meal-name-link:hover { color:var(--cyan); text-decoration:underline; }
         .detail-section-title { font-family:"SFMono-Regular", Consolas, "Liberation Mono", monospace; text-transform:uppercase; letter-spacing:0.08em; font-size:0.7rem; color:var(--cyan); text-shadow: 0 0 8px rgba(45,226,230,0.5); border-bottom:1px dashed rgba(255,255,255,0.18); padding-bottom:4px; margin-bottom:8px; }
@@ -1751,7 +1773,10 @@ export default function App() {
           .receipt-header-actions, .receipt-print-btn, .mp-close-btn { display:none !important; }
           .receipt-disclaimer { color:#444 !important; padding:10px 0 !important; }
           .receipt-content { overflow:visible !important; padding:0 !important; background:none !important; }
-          .receipt-cat-header { color:#111 !important; border-bottom:1px solid #bbb !important; page-break-after:avoid; }
+          .receipt-meal-group { border:1px solid #ddd !important; background:#fff !important; page-break-inside:avoid; }
+          .receipt-meal-header { border-bottom:1px solid #bbb !important; page-break-after:avoid; }
+          .receipt-meal-title, .receipt-meal-total, .receipt-meal-subtotal strong { color:#111 !important; }
+          .receipt-meal-meta, .receipt-meal-tag, .receipt-category-pill { color:#444 !important; }
           .receipt-line { color:#111 !important; page-break-inside:avoid; }
           .receipt-check { border-color:#111 !important; }
           .receipt-dots { border-bottom:1px dotted #777 !important; }
@@ -2655,33 +2680,32 @@ export default function App() {
                   list.
                 </div>
               ) : (
-                shoppingList.map((cat) => (
-                  <div key={cat.category}>
-                    <div className="receipt-cat-header">
-                      <span>
-                        {CATEGORY_META[cat.category].emoji}{" "}
-                        {CATEGORY_META[cat.category].label}
-                      </span>
-                      <span>
-                        {cat.categoryTotal > 0
-                          ? `$${cat.categoryTotal.toFixed(2)}`
+                shoppingList.map((mealGroup) => (
+                  <div className="receipt-meal-group" key={mealGroup.id}>
+                    <div className="receipt-meal-header">
+                      <div>
+                        <div className="receipt-meal-title">
+                          {mealGroup.mealEmoji} {mealGroup.mealName}
+                        </div>
+                        <div className="receipt-meal-meta">
+                          {mealGroup.dayLabel} · {MEAL_TYPE_META[mealGroup.mealType]?.label || "Meal"} · Serves {mealGroup.servings}
+                        </div>
+                      </div>
+                      <div className="receipt-meal-total">
+                        {mealGroup.mealTotal > 0
+                          ? `$${mealGroup.mealTotal.toFixed(2)}`
                           : ""}
-                      </span>
+                      </div>
                     </div>
-                    {cat.items.map((item) => {
-                      const itemKey = `${cat.category}|${item.name.toLowerCase()}|${item.unit.toLowerCase()}`;
+                    {mealGroup.items.map((item) => {
+                      const itemKey = item.id;
                       const isChecked = checked.has(itemKey);
                       const hasPurchase =
                         item.purchaseItem && item.packagesNeeded !== null;
                       const fallbackBuyAs = hasPurchase
                         ? null
                         : storePurchaseFor(item.name, item.amount, item.unit);
-                      const lineTotal =
-                        item.purchaseCost !== null
-                          ? item.purchaseCost
-                          : item.priceCount > 0
-                            ? item.priceSum
-                            : null;
+                      const lineTotal = item.lineTotal;
                       return (
                         <div key={itemKey}>
                           <div
@@ -2693,7 +2717,14 @@ export default function App() {
                             >
                               {isChecked && <Check size={10} />}
                             </span>
-                            <span className="receipt-name">{item.name}</span>
+                            <span className="receipt-name-wrap">
+                              <span className="receipt-name">
+                                {item.name} <span className="receipt-meal-tag">({mealGroup.mealName})</span>
+                              </span>
+                              <span className="receipt-category-pill">
+                                {CATEGORY_META[item.category]?.label || "Other"}
+                              </span>
+                            </span>
                             <span className="receipt-dots" />
                             <span className="receipt-qty">
                               {item.amount !== null
@@ -2725,6 +2756,14 @@ export default function App() {
                         </div>
                       );
                     })}
+                    <div className="receipt-meal-subtotal">
+                      <span>Meal subtotal</span>
+                      <strong>
+                        {mealGroup.mealTotal > 0
+                          ? `$${mealGroup.mealTotal.toFixed(2)}`
+                          : "—"}
+                      </strong>
+                    </div>
                   </div>
                 ))
               )}
