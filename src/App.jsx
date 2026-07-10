@@ -17,6 +17,7 @@ import {
   Star,
 } from "lucide-react";
 import { storage } from "./storage";
+import { PRELOADED_MEALS } from "./preloadedMeals";
 import { askLLM, saveApiKey, hasApiKey, clearApiKey } from "./llm";
 import {
   STARTUP_RANDOM_PROMPT,
@@ -522,10 +523,6 @@ function buildShoppingList(assignments, includeKeys) {
   });
 }
 
-const BAR_WIDTHS = [
-  2, 4, 1, 3, 2, 5, 1, 2, 4, 3, 1, 2, 5, 2, 1, 3, 4, 2, 1, 3, 2, 4, 1, 3, 2, 5,
-  1, 2,
-];
 
 function makeInstanceId() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -545,6 +542,106 @@ function emptyIngredientRow() {
   };
 }
 
+function mealFavoriteKey(meal) {
+  return `${meal?.name || ""}|${meal?.mealType || ""}`
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function mealDisplayKey(meal, fallback = "meal") {
+  return meal?.id || mealFavoriteKey(meal) || `${fallback}-${Date.now()}`;
+}
+
+function copyMealForStorage(meal) {
+  return {
+    id: meal?.id || `favorite-${mealFavoriteKey(meal)}`,
+    name: meal.name,
+    emoji: meal.emoji,
+    mealType: meal.mealType,
+    baseServings: meal.baseServings || 4,
+    ingredients: meal.ingredients || [],
+    instructions: meal.instructions || null,
+  };
+}
+
+
+const MEAL_TYPE_SORT_ORDER = {
+  dinner: 0,
+  lunch: 1,
+  breakfast: 2,
+  snack: 3,
+};
+
+const MEAL_TYPE_FILTER_OPTIONS = [
+  { value: "dinner", label: "Dinner" },
+  { value: "lunch", label: "Lunch" },
+  { value: "breakfast", label: "Breakfast" },
+];
+
+const MEAL_SORT_OPTIONS = [
+  { value: "name", label: "A to Z" },
+  { value: "servings", label: "Servings" },
+];
+
+function mealTypeSortIndex(mealType) {
+  return Object.prototype.hasOwnProperty.call(MEAL_TYPE_SORT_ORDER, mealType)
+    ? MEAL_TYPE_SORT_ORDER[mealType]
+    : 99;
+}
+
+function normalizeMealSearch(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function filterAndSortMeals(meals, searchText, typeFilter, sortMode) {
+  const search = normalizeMealSearch(searchText);
+
+  return [...(meals || [])]
+    .filter((meal) => {
+      const mealType = meal?.mealType || "dinner";
+
+      if (mealType !== typeFilter) {
+        return false;
+      }
+
+      if (!search) {
+        return true;
+      }
+
+      const searchableText = [
+        meal?.name,
+        mealType,
+        ...(meal?.ingredients || []).map((ing) => ing?.name),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return searchableText.includes(search);
+    })
+    .sort((a, b) => {
+      if (sortMode === "name") {
+        return String(a.name || "").localeCompare(String(b.name || ""));
+      }
+
+      if (sortMode === "servings") {
+        const servingDiff = (a.baseServings || 4) - (b.baseServings || 4);
+        if (servingDiff !== 0) return servingDiff;
+        return String(a.name || "").localeCompare(String(b.name || ""));
+      }
+
+      const typeDiff =
+        mealTypeSortIndex(a.mealType || "dinner") -
+        mealTypeSortIndex(b.mealType || "dinner");
+
+      if (typeDiff !== 0) return typeDiff;
+
+      return String(a.name || "").localeCompare(String(b.name || ""));
+    });
+}
+
 // ---------- AI meal suggestions ----------
 
 function buildMealSuggestionPrompt(userPrompt, dayLabel) {
@@ -559,7 +656,7 @@ Respond with ONLY a raw JSON array — no markdown, no code fences, no commentar
   {
     "name": "string, meal name",
     "emoji": "a single emoji representing the dish",
-    "mealType": "breakfast" | "lunch" | "dinner" | "snack",
+    "mealType": "breakfast" | "lunch" | "dinner",
     "baseServings": integer, typically 4,
     "ingredients": [
       {
@@ -682,6 +779,7 @@ export default function App() {
   const [assignments, setAssignments] = useState({});
   const [checked, setChecked] = useState(new Set());
   const [customMeals, setCustomMeals] = useState([]);
+  const [favoriteMeals, setFavoriteMeals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [storageWarning, setStorageWarning] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -704,7 +802,10 @@ export default function App() {
   const [detailInstructionsLoading, setDetailInstructionsLoading] =
     useState(false);
   const [detailInstructionsError, setDetailInstructionsError] = useState("");
-  const [modalTab, setModalTab] = useState("suggested");
+  const [modalTab, setModalTab] = useState("mine");
+  const [mealSearchText, setMealSearchText] = useState("");
+  const [mealTypeFilter, setMealTypeFilter] = useState("dinner");
+  const [mealSortMode, setMealSortMode] = useState("name");
   const [showShoppingList, setShowShoppingList] = useState(false);
 
   const [aiSuggestPrompt, setAiSuggestPrompt] = useState("");
@@ -728,15 +829,18 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [assignRes, mealsRes] = await Promise.all([
+        const [assignRes, mealsRes, favoritesRes] = await Promise.all([
           storage.get("assignments"),
           storage.get("custom-meals"),
+          storage.get("favorite-meals"),
         ]);
         setAssignments(assignRes ? JSON.parse(assignRes.value) : {});
         setCustomMeals(mealsRes ? JSON.parse(mealsRes.value) : []);
+        setFavoriteMeals(favoritesRes ? JSON.parse(favoritesRes.value) : []);
       } catch {
         setAssignments({});
         setCustomMeals([]);
+        setFavoriteMeals([]);
       }
       setLoading(false);
     })();
@@ -775,6 +879,13 @@ export default function App() {
   const persistCustomMeals = async (list) => {
     try {
       await storage.set("custom-meals", JSON.stringify(list));
+    } catch {
+      setStorageWarning(true);
+    }
+  };
+  const persistFavoriteMeals = async (list) => {
+    try {
+      await storage.set("favorite-meals", JSON.stringify(list));
     } catch {
       setStorageWarning(true);
     }
@@ -828,7 +939,7 @@ export default function App() {
       setKeyInputValue("");
       setKeyStatusMsg("Saved");
       setTimeout(() => setKeyStatusMsg(""), 2000);
-      
+
     } catch (e) {
       setKeyStatusMsg(`⚠️ ${e?.message || e}`);
     }
@@ -861,7 +972,7 @@ export default function App() {
       persistAssignments(next);
       return next;
     });
-    setModalTab("suggested");
+    setModalTab("mine");
   }
 
   function updateMealServings(dayKey, instanceId, nextServings) {
@@ -891,6 +1002,58 @@ export default function App() {
     });
   }
 
+  function clearMealsForDateKeys(keys, label) {
+    const keysWithMeals = keys.filter((key) => (assignments[key] || []).length > 0);
+
+    if (keysWithMeals.length === 0) {
+      return;
+    }
+
+    const mealCount = keysWithMeals.reduce(
+      (sum, key) => sum + (assignments[key] || []).length,
+      0,
+    );
+
+    const confirmed = window.confirm(
+      `Clear ${mealCount} planned meal${mealCount === 1 ? "" : "s"} from this ${label}? This will not delete saved meals.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setAssignments((prev) => {
+      const next = { ...prev };
+
+      keysWithMeals.forEach((key) => {
+        delete next[key];
+      });
+
+      persistAssignments(next);
+      return next;
+    });
+  }
+
+  function clearCurrentRangeMeals() {
+    clearMealsForDateKeys(
+      rangeDateKeys,
+      viewMode === "week" ? "week" : "month",
+    );
+  }
+
+  function clearActiveDayMeals() {
+    if (!activeDayKey) {
+      return;
+    }
+
+    clearMealsForDateKeys([activeDayKey], "day");
+  }
+
+
+  function printShoppingList() {
+    window.print();
+  }
+
   function toggleChecked(itemKey) {
     setChecked((prev) => {
       const next = new Set(prev);
@@ -901,9 +1064,43 @@ export default function App() {
   }
 
   function deleteCustomMeal(id) {
+    const mealToDelete = customMeals.find((m) => m.id === id);
+
     setCustomMeals((prev) => {
       const next = prev.filter((m) => m.id !== id);
       persistCustomMeals(next);
+      return next;
+    });
+
+    if (mealToDelete) {
+      const deleteKey = mealFavoriteKey(mealToDelete);
+      setFavoriteMeals((prev) => {
+        const next = prev.filter((m) => mealFavoriteKey(m) !== deleteKey);
+        persistFavoriteMeals(next);
+        return next;
+      });
+    }
+  }
+
+  function isMealFavorite(meal) {
+    const key = mealFavoriteKey(meal);
+    return favoriteMeals.some((m) => mealFavoriteKey(m) === key);
+  }
+
+  function toggleFavoriteMeal(meal) {
+    const key = mealFavoriteKey(meal);
+
+    if (!key) {
+      return;
+    }
+
+    setFavoriteMeals((prev) => {
+      const exists = prev.some((m) => mealFavoriteKey(m) === key);
+      const next = exists
+        ? prev.filter((m) => mealFavoriteKey(m) !== key)
+        : [...prev, copyMealForStorage(meal)];
+
+      persistFavoriteMeals(next);
       return next;
     });
   }
@@ -959,6 +1156,45 @@ export default function App() {
     setModalTab("mine");
   }
 
+  const myMealLibrary = useMemo(
+    () => [...PRELOADED_MEALS, ...customMeals],
+    [customMeals],
+  );
+
+
+  const filteredMyMealLibrary = useMemo(
+    () =>
+      filterAndSortMeals(
+        myMealLibrary,
+        mealSearchText,
+        mealTypeFilter,
+        mealSortMode,
+      ),
+    [myMealLibrary, mealSearchText, mealTypeFilter, mealSortMode],
+  );
+
+  const filteredAiSuggestions = useMemo(
+    () =>
+      filterAndSortMeals(
+        aiSuggestions,
+        mealSearchText,
+        mealTypeFilter,
+        mealSortMode,
+      ),
+    [aiSuggestions, mealSearchText, mealTypeFilter, mealSortMode],
+  );
+
+  const filteredFavoriteMeals = useMemo(
+    () =>
+      filterAndSortMeals(
+        favoriteMeals,
+        mealSearchText,
+        mealTypeFilter,
+        mealSortMode,
+      ),
+    [favoriteMeals, mealSearchText, mealTypeFilter, mealSortMode],
+  );
+
   const shoppingList = useMemo(
     () => buildShoppingList(assignments, rangeDateKeys),
     [assignments, rangeDateKeys],
@@ -977,6 +1213,9 @@ export default function App() {
       cat.items.filter((it) => it.purchaseCost === null && it.priceCount === 0)
         .length,
     0,
+  );
+  const hasRangeMeals = rangeDateKeys.some(
+    (key) => (assignments[key] || []).length > 0,
   );
   const activeDayMeals = activeDayKey ? assignments[activeDayKey] || [] : [];
   const detailMealData = detailMeal
@@ -1013,7 +1252,7 @@ export default function App() {
       setKeyEditing(false);
       setOnboardingKeyInput("");
       setShowOnboarding(false);
-      
+
     } catch (e) {
       setOnboardingStatusMsg(`⚠️ ${e?.message || e}`);
     }
@@ -1186,20 +1425,59 @@ export default function App() {
   }
 
   function saveSuggestionToMyMeals(meal) {
-    const toSave = {
-      id: makeCustomMealId(),
-      name: meal.name,
-      emoji: meal.emoji,
-      mealType: meal.mealType,
-      baseServings: meal.baseServings,
-      ingredients: meal.ingredients,
-      instructions: meal.instructions || null,
-    };
-    setCustomMeals((prev) => {
-      const next = [...prev, toSave];
-      persistCustomMeals(next);
-      return next;
-    });
+    toggleFavoriteMeal(meal);
+  }
+
+
+  function countMealsForType(meals, mealType) {
+    return (meals || []).filter((meal) => (meal?.mealType || "dinner") === mealType)
+      .length;
+  }
+
+  function renderMealListControls(resultCount, meals) {
+    const activeTypeTotal = countMealsForType(meals, mealTypeFilter);
+
+    return (
+      <div className="meal-filter-panel">
+        <div className="meal-type-tabs" role="tablist" aria-label="Meal type filter">
+          {MEAL_TYPE_FILTER_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              className={`meal-type-tab${mealTypeFilter === option.value ? " active" : ""}`}
+              onClick={() => setMealTypeFilter(option.value)}
+              type="button"
+            >
+              <span>{option.label}</span>
+              <span className="meal-type-count">{countMealsForType(meals, option.value)}</span>
+            </button>
+          ))}
+        </div>
+        <div className="meal-filter-row">
+          <div className="meal-filter-search">
+            <Search size={15} />
+            <input
+              value={mealSearchText}
+              onChange={(e) => setMealSearchText(e.target.value)}
+              placeholder={`Search ${mealTypeFilter} meals or ingredients…`}
+            />
+          </div>
+          <select
+            className="meal-filter-select"
+            value={mealSortMode}
+            onChange={(e) => setMealSortMode(e.target.value)}
+          >
+            {MEAL_SORT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                Sort: {option.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="meal-filter-count">
+          Showing {resultCount} of {activeTypeTotal} {mealTypeFilter} meals
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -1228,9 +1506,17 @@ export default function App() {
           padding: calc(28px + env(safe-area-inset-top, 0px)) calc(20px + env(safe-area-inset-right, 0px)) calc(100px + env(safe-area-inset-bottom, 0px)) calc(20px + env(safe-area-inset-left, 0px));
           box-sizing: border-box;
         }
-        .mp-body { font-family: 'Space Grotesk', sans-serif; }
-        .mp-display { font-family: 'Orbitron', sans-serif; letter-spacing: 0.02em; }
-        .mp-mono { font-family: 'Space Mono', monospace; }
+        .mp-body {
+          font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          line-height: 1.45;
+        }
+        .mp-display {
+          font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+          letter-spacing: 0;
+        }
+        .mp-mono {
+          font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+        }
 
         .mp-content { position: relative; z-index: 1; }
 
@@ -1241,9 +1527,12 @@ export default function App() {
         .mp-nav-btn:hover { background: rgba(45,226,230,0.15); border-color: var(--cyan); box-shadow: 0 0 10px rgba(45,226,230,0.4); }
         .mp-today-btn { background:transparent; border:1px solid var(--magenta-soft); color:var(--text); padding:6px 14px; border-radius:999px; font-size:0.8rem; cursor:pointer; }
         .mp-today-btn:hover { background: rgba(255,47,120,0.15); box-shadow: 0 0 10px rgba(255,47,120,0.4); }
+        .mp-clear-btn { background:rgba(255,47,120,0.12); border:1px solid rgba(255,111,168,0.45); color:var(--text); padding:7px 11px; border-radius:999px; font-size:0.78rem; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px; font-family:Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        .mp-clear-btn:hover { background:rgba(255,47,120,0.22); border-color:var(--magenta-soft); box-shadow:0 0 10px rgba(255,47,120,0.25); }
+        .mp-clear-btn-small { padding:5px 9px; font-size:0.74rem; }
 
         .view-toggle { display:flex; background: rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.14); border-radius:999px; padding:3px; gap:2px; }
-        .view-toggle-btn { border:none; background:transparent; color:var(--text-dim); padding:6px 16px; border-radius:999px; font-size:0.8rem; cursor:pointer; font-family:'Space Grotesk',sans-serif; }
+        .view-toggle-btn { border:none; background:transparent; color:var(--text-dim); padding:6px 16px; border-radius:999px; font-size:0.8rem; cursor:pointer; font-family:Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
         .view-toggle-btn.active { background: linear-gradient(90deg, var(--magenta), var(--violet)); color:#fff; box-shadow: 0 0 12px rgba(255,47,120,0.45); }
 
         .mp-grid { max-width:1100px; margin:0 auto; display:grid; grid-template-columns:1fr; gap:14px; }
@@ -1254,7 +1543,7 @@ export default function App() {
         .day-card.today { border-color: var(--cyan); box-shadow: 0 0 20px rgba(45,230,230,0.35); }
         .day-card-head { margin-bottom:10px; }
         .day-name { font-size:0.72rem; text-transform:uppercase; letter-spacing:0.1em; opacity:0.6; font-weight:600; }
-        .day-date { font-family:'Orbitron', sans-serif; font-size:1.2rem; font-weight:700; }
+        .day-date { font-family:Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size:1.2rem; font-weight:700; }
         .meal-list { display:flex; flex-direction:column; gap:6px; flex:1; }
         .meal-chip { background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:7px 8px; display:flex; flex-direction:column; gap:4px; font-size:0.82rem; }
         .meal-chip-top { display:flex; align-items:center; gap:6px; }
@@ -1275,7 +1564,7 @@ export default function App() {
         .month-cell:hover { border-color: var(--cyan); box-shadow: 0 0 10px rgba(45,226,230,0.25); }
         .month-cell.outside { opacity:0.35; }
         .month-cell.today { border-color: var(--cyan); box-shadow: 0 0 14px rgba(45,230,230,0.3); }
-        .month-cell-date { font-family:'Orbitron', sans-serif; font-size:0.85rem; font-weight:700; }
+        .month-cell-date { font-family:Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size:0.85rem; font-weight:700; }
         .month-preview-row { display:flex; flex-wrap:wrap; gap:3px; font-size:0.78rem; }
         .month-more-badge { font-size:0.65rem; opacity:0.6; align-self:center; }
 
@@ -1284,7 +1573,8 @@ export default function App() {
         .mp-modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:4px; }
         .mp-close-btn { background:rgba(255,255,255,0.08); border:none; border-radius:999px; width:30px; height:30px; display:flex; align-items:center; justify-content:center; cursor:pointer; color:var(--text); }
         .mp-close-btn:hover { background:rgba(255,255,255,0.16); }
-        .modal-day-title { font-size:0.85rem; color:var(--text-dim); margin-bottom:12px; }
+        .modal-day-row { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:12px; }
+        .modal-day-title { font-size:0.85rem; color:var(--text-dim); }
         .modal-current-meals { display:flex; flex-direction:column; gap:6px; margin-bottom:16px; padding-bottom:16px; border-bottom:1px dashed rgba(255,255,255,0.15); }
         .modal-current-empty { font-size:0.82rem; color:var(--text-dim); margin-bottom:16px; padding-bottom:16px; border-bottom:1px dashed rgba(255,255,255,0.15); }
 
@@ -1293,7 +1583,102 @@ export default function App() {
         .mp-tab.active { border-color:var(--magenta); font-weight:600; color:var(--text); }
 
         .mp-search { display:flex; align-items:center; gap:8px; background:var(--field-bg); border:1px solid rgba(255,255,255,0.14); border-radius:10px; padding:8px 12px; margin-bottom:12px; }
-        .mp-search input { border:none; outline:none; flex:1; font-size:0.9rem; background:transparent; color:var(--text); font-family:'Space Grotesk',sans-serif; }
+        .mp-search input { border:none; outline:none; flex:1; font-size:0.9rem; background:transparent; color:var(--text); font-family:Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+
+
+        .meal-filter-panel { display:flex; flex-direction:column; gap:9px; margin:0 0 14px; }
+        .meal-type-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; background:rgba(255,255,255,0.045); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:4px; }
+        .meal-type-tab { border:none; border-radius:9px; background:transparent; color:var(--text-dim); cursor:pointer; padding:8px 6px; display:flex; align-items:center; justify-content:center; gap:6px; font-family:Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size:0.82rem; font-weight:700; }
+        .meal-type-tab.active { color:#fff; background:linear-gradient(90deg, var(--magenta), var(--violet)); box-shadow:0 0 12px rgba(255,47,120,0.35); }
+        .meal-type-count { min-width:18px; border-radius:999px; padding:1px 6px; background:rgba(255,255,255,0.12); font-size:0.7rem; }
+        .meal-filter-row { display:grid; grid-template-columns:1fr auto; align-items:center; gap:8px; }
+        .meal-filter-search { display:flex; align-items:center; gap:8px; min-width:180px; background:var(--field-bg); border:1px solid rgba(255,255,255,0.14); border-radius:10px; padding:8px 10px; color:var(--text-dim); }
+        .meal-filter-search input { width:100%; border:none; outline:none; background:transparent; color:var(--text); font-family:Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size:0.88rem; }
+        .meal-filter-search input::placeholder { color: rgba(244,234,255,0.36); }
+        .meal-filter-select { border:1px solid rgba(255,255,255,0.16); border-radius:10px; padding:8px 10px; font-size:0.82rem; background:rgba(255,255,255,0.08); color:var(--text); font-family:Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        .meal-filter-select option { background:#241246; color:#fff; }
+        .meal-filter-count { font-size:0.72rem; color:var(--text-dim); }
+        @media (max-width:720px){
+          .meal-filter-row{ grid-template-columns:1fr; }
+          .meal-type-tabs{ grid-template-columns:repeat(3,minmax(0,1fr)); gap:3px; padding:3px; }
+          .meal-type-tab{ padding:6px 3px; gap:3px; flex-direction:column; line-height:1.05; font-size:0.72rem; }
+          .meal-type-count{ min-width:16px; padding:1px 5px; font-size:0.62rem; }
+        }
+
+        @media (max-width:560px){
+          .mp-app{
+            padding: calc(14px + env(safe-area-inset-top, 0px)) calc(10px + env(safe-area-inset-right, 0px)) calc(84px + env(safe-area-inset-bottom, 0px)) calc(10px + env(safe-area-inset-left, 0px));
+          }
+          .mp-header{ margin-bottom:12px; gap:10px; }
+          .mp-title-row{ gap:8px; }
+          .mp-nav{ width:100%; gap:6px; justify-content:flex-start; overflow-x:auto; padding-bottom:3px; scrollbar-width:none; }
+          .mp-nav::-webkit-scrollbar{ display:none; }
+          .view-toggle-btn{ padding:5px 10px; font-size:0.74rem; }
+          .mp-nav-btn{ width:32px; height:32px; flex:0 0 auto; }
+          .mp-today-btn{ padding:5px 10px; font-size:0.74rem; }
+          .mp-clear-btn{ padding:6px 9px; font-size:0.72rem; }
+          .ai-status-pill{ flex:0 0 auto; padding:6px 9px; font-size:0.68rem; }
+
+          .mp-grid{ gap:10px; }
+          .day-card{ min-height:160px; padding:11px; border-radius:12px; }
+          .day-card-head{ margin-bottom:8px; }
+          .day-name{ font-size:0.66rem; }
+          .day-date{ font-size:1rem; }
+          .meal-chip{ padding:7px; font-size:0.78rem; }
+          .meal-servings{ font-size:0.68rem; }
+          .add-meal-btn{ padding:8px; font-size:0.76rem; }
+
+          .month-weekday-row{ display:none; }
+          .month-grid{ grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+          .month-cell{ min-height:72px; padding:8px; }
+
+          .mp-overlay{ align-items:flex-end; padding:0; background:rgba(8,4,16,0.78); }
+          .mp-modal{
+            width:100%;
+            max-width:none;
+            max-height:92dvh;
+            border-radius:18px 18px 0 0;
+            padding:16px 14px calc(20px + env(safe-area-inset-bottom, 0px));
+          }
+          .mp-modal-head{ margin-bottom:6px; }
+          .mp-modal-head h2{ font-size:1.25rem; }
+          .modal-day-row{ align-items:flex-start; gap:8px; margin-bottom:10px; }
+          .modal-current-meals{ margin-bottom:12px; padding-bottom:12px; }
+          .modal-current-empty{ margin-bottom:12px; padding-bottom:12px; }
+
+          .mp-tabs{ gap:0; margin-bottom:12px; overflow-x:auto; white-space:nowrap; scrollbar-width:none; }
+          .mp-tabs::-webkit-scrollbar{ display:none; }
+          .mp-tab{ flex:0 0 auto; padding:8px 10px; font-size:0.78rem; }
+
+          .meal-filter-panel{ gap:7px; margin-bottom:10px; }
+          .meal-type-tabs{ border-radius:11px; }
+          .meal-filter-search{ min-width:0; padding:7px 9px; }
+          .meal-filter-search input{ font-size:0.82rem; }
+          .meal-filter-select{ width:100%; padding:7px 9px; font-size:0.8rem; }
+          .meal-filter-count{ font-size:0.68rem; }
+
+          .suggested-grid{ grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+          .suggested-card{ padding:9px 8px; min-height:86px; }
+          .suggested-emoji{ font-size:1.35rem; }
+          .suggested-name{ font-size:0.82rem; line-height:1.25; }
+          .suggested-type{ font-size:0.64rem; }
+          .suggested-del{ width:20px; height:20px; top:5px; right:5px; }
+
+          .mp-input, .mp-select{ font-size:0.82rem; padding:8px 9px; }
+          .ing-row{ grid-template-columns:1fr 0.75fr; gap:7px; }
+
+          .receipt-panel{ max-width:none; width:100%; }
+          .receipt-header{ padding:18px 18px 12px; }
+          .receipt-content{ padding:12px 18px 10px; }
+          .receipt-footer{ padding:10px 18px calc(18px + env(safe-area-inset-bottom, 0px)); }
+          .fab{ right:calc(14px + env(safe-area-inset-right, 0px)); bottom:calc(14px + env(safe-area-inset-bottom, 0px)); padding:12px 16px; font-size:0.82rem; }
+        }
+
+        @media (max-width:360px){
+          .suggested-grid{ grid-template-columns:1fr; }
+          .mp-tab{ padding:8px 8px; font-size:0.74rem; }
+          .meal-type-tab{ font-size:0.68rem; }
+        }
 
         .suggested-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
         .suggested-card { border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:10px; cursor:pointer; background:rgba(255,255,255,0.05); transition: transform .12s, box-shadow .12s; text-align:left; position:relative; color:var(--text); }
@@ -1306,7 +1691,7 @@ export default function App() {
         .mp-empty { text-align:center; padding:30px 10px; opacity:0.6; font-size:0.9rem; }
 
         .mp-field-label { font-size:0.72rem; text-transform:uppercase; letter-spacing:0.06em; opacity:0.55; margin-bottom:4px; display:block; }
-        .mp-input, .mp-select { width:100%; border:1px solid rgba(255,255,255,0.16); border-radius:8px; padding:8px 10px; font-size:0.88rem; background:var(--field-bg); color:var(--text); font-family:'Space Grotesk',sans-serif; box-sizing:border-box; }
+        .mp-input, .mp-select { width:100%; border:1px solid rgba(255,255,255,0.16); border-radius:8px; padding:8px 10px; font-size:0.88rem; background:var(--field-bg); color:var(--text); font-family:Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; box-sizing:border-box; }
         .mp-input::placeholder { color: rgba(244,234,255,0.35); }
         .emoji-row { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:14px; }
         .emoji-btn { font-size:1.2rem; width:36px; height:36px; border-radius:8px; border:1.5px solid rgba(255,255,255,0.1); background:rgba(255,255,255,0.05); cursor:pointer; }
@@ -1326,40 +1711,62 @@ export default function App() {
         .fab:hover { filter: brightness(1.1); }
         .fab-badge { background:#fff; color:var(--magenta); border-radius:999px; padding:1px 8px; font-size:0.75rem; font-weight:700; }
 
-        .receipt-panel { position:fixed; top:0; right:0; height:100vh; padding-top:env(safe-area-inset-top, 0px); width:100%; max-width:400px; background: linear-gradient(180deg, var(--night-mid), var(--night)); color:var(--text); box-shadow:-10px 0 30px rgba(0,0,0,0.5); z-index:70; display:flex; flex-direction:column; border-left: 1px solid var(--border-glow); }
-        .receipt-header { padding:20px 22px 14px; display:flex; align-items:flex-start; justify-content:space-between; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .receipt-panel { position:fixed; top:0; right:0; height:100vh; padding-top:env(safe-area-inset-top, 0px); width:100%; max-width:430px; background: linear-gradient(180deg, #21113d, #130820); color:var(--text); box-shadow:-10px 0 30px rgba(0,0,0,0.5); z-index:70; display:flex; flex-direction:column; border-left: 1px solid var(--border-glow); font-family:Arial, "Helvetica Neue", Helvetica, sans-serif; }
+        .receipt-header { padding:20px 22px 14px; display:flex; align-items:flex-start; justify-content:space-between; gap:12px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+        .receipt-header-actions { display:flex; align-items:center; gap:8px; }
+        .receipt-print-btn { background:rgba(45,226,230,0.12); color:var(--cyan); border:1px solid rgba(45,226,230,0.35); border-radius:999px; padding:7px 10px; font-size:0.78rem; font-weight:700; cursor:pointer; font-family:Arial, "Helvetica Neue", Helvetica, sans-serif; }
+        .receipt-print-btn:hover { background:rgba(45,226,230,0.2); }
         .receipt-disclaimer { font-size:0.72rem; color:var(--text-dim); padding: 10px 22px 0; }
         .receipt-content { flex:1; overflow-y:auto; padding:12px 22px 10px; background-image: repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0 2px, transparent 2px 4px); }
-        .receipt-cat-header { font-family:'Space Mono',monospace; text-transform:uppercase; letter-spacing:0.08em; font-size:0.7rem; margin-top:16px; margin-bottom:6px; color:var(--cyan); text-shadow: 0 0 8px rgba(45,226,230,0.5); border-bottom:1px dashed rgba(255,255,255,0.18); padding-bottom:4px; display:flex; justify-content:space-between; }
+        .receipt-cat-header { font-family:Arial, "Helvetica Neue", Helvetica, sans-serif; text-transform:uppercase; letter-spacing:0.04em; font-size:0.76rem; font-weight:800; margin-top:16px; margin-bottom:8px; color:var(--cyan); text-shadow:none; border-bottom:1px solid rgba(255,255,255,0.18); padding-bottom:6px; display:flex; justify-content:space-between; }
         .receipt-cat-header:first-child { margin-top:0; }
-        .receipt-line { display:flex; align-items:baseline; gap:6px; padding:4px 0 0; cursor:pointer; font-family:'Space Mono',monospace; font-size:0.86rem; }
+        .receipt-line { display:flex; align-items:baseline; gap:7px; padding:7px 0 0; cursor:pointer; font-family:Arial, "Helvetica Neue", Helvetica, sans-serif; font-size:0.96rem; font-weight:500; line-height:1.42; letter-spacing:0; }
         .receipt-check { width:14px; height:14px; border:1.5px solid var(--text); border-radius:3px; flex-shrink:0; display:flex; align-items:center; justify-content:center; }
         .receipt-check.on { background:var(--magenta); border-color:var(--magenta); color:#fff; }
         .receipt-dots { flex:1; border-bottom:1px dotted rgba(255,255,255,0.3); margin-bottom:4px; min-width:8px; }
         .receipt-line.done .receipt-name, .receipt-line.done .receipt-qty { text-decoration:line-through; opacity:0.4; }
-        .receipt-price-line { display:flex; justify-content:flex-end; gap:10px; font-family:'Space Mono',monospace; font-size:0.72rem; color:var(--text-dim); padding-bottom:6px; }
+        .receipt-price-line { display:flex; justify-content:flex-end; gap:10px; font-family:Arial, "Helvetica Neue", Helvetica, sans-serif; font-size:0.8rem; color:var(--text-dim); padding:1px 0 9px 22px; }
         .receipt-buy-as { margin-right:auto; color:var(--cyan); }
         .meal-name-link { cursor:pointer; }
         .meal-name-link:hover { color:var(--cyan); text-decoration:underline; }
-        .detail-section-title { font-family:'Space Mono',monospace; text-transform:uppercase; letter-spacing:0.08em; font-size:0.7rem; color:var(--cyan); text-shadow: 0 0 8px rgba(45,226,230,0.5); border-bottom:1px dashed rgba(255,255,255,0.18); padding-bottom:4px; margin-bottom:8px; }
-        .detail-ing-row { display:flex; align-items:baseline; gap:6px; padding:3px 0; font-family:'Space Mono',monospace; font-size:0.84rem; }
+        .detail-section-title { font-family:"SFMono-Regular", Consolas, "Liberation Mono", monospace; text-transform:uppercase; letter-spacing:0.08em; font-size:0.7rem; color:var(--cyan); text-shadow: 0 0 8px rgba(45,226,230,0.5); border-bottom:1px dashed rgba(255,255,255,0.18); padding-bottom:4px; margin-bottom:8px; }
+        .detail-ing-row { display:flex; align-items:baseline; gap:6px; padding:3px 0; font-family:"SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size:0.84rem; }
         .detail-ing-name { }
         .detail-ing-qty { color:var(--text-dim); }
         .detail-instructions { font-size:0.88rem; line-height:1.7; white-space:pre-wrap; color:var(--text); }
+        .recipe-source-note { margin-top:8px; font-size:0.76rem; color:var(--text-dim); line-height:1.45; }
+        .recipe-source-note a { color:var(--cyan); text-decoration:none; }
+        .recipe-source-note a:hover { text-decoration:underline; }
         .receipt-line-total { color: var(--sun-mid); font-weight:700; }
-        .receipt-footer { padding:10px 22px 22px; border-top: 1px solid rgba(255,255,255,0.1); }
-        .barcode { display:flex; align-items:flex-end; gap:2px; height:28px; margin-top:6px; }
-        .barcode span:nth-child(odd) { background:var(--cyan); flex-shrink:0; height:100%; }
-        .barcode span:nth-child(even) { background:var(--magenta-soft); flex-shrink:0; height:100%; }
-        .receipt-grand-total { font-family:'Orbitron',sans-serif; font-size:1.1rem; text-align:center; margin-top:12px; color:var(--sun-core); text-shadow: 0 0 10px rgba(255,157,108,0.6); }
-        .receipt-grand-note { font-family:'Space Mono',monospace; font-size:0.68rem; text-align:center; margin-top:4px; opacity:0.55; }
+        .receipt-footer { padding:16px 22px 22px; border-top: 1px solid rgba(255,255,255,0.1); }
+        .receipt-grand-total { font-family:Arial, "Helvetica Neue", Helvetica, sans-serif; font-size:1.12rem; text-align:center; margin-top:12px; color:var(--sun-core); text-shadow:none; font-weight:800; }
+        .receipt-grand-note { font-family:Arial, "Helvetica Neue", Helvetica, sans-serif; font-size:0.76rem; text-align:center; margin-top:4px; opacity:0.68; }
+
+
+        @media print {
+          body * { visibility:hidden !important; }
+          .receipt-panel, .receipt-panel * { visibility:visible !important; }
+          .receipt-panel { position:absolute !important; inset:0 !important; width:100% !important; max-width:none !important; height:auto !important; min-height:auto !important; padding:0 !important; background:#fff !important; color:#111 !important; box-shadow:none !important; border:none !important; }
+          .receipt-header { padding:18px 0 10px !important; border-bottom:1px solid #bbb !important; }
+          .receipt-header-actions, .receipt-print-btn, .mp-close-btn { display:none !important; }
+          .receipt-disclaimer { color:#444 !important; padding:10px 0 !important; }
+          .receipt-content { overflow:visible !important; padding:0 !important; background:none !important; }
+          .receipt-cat-header { color:#111 !important; border-bottom:1px solid #bbb !important; page-break-after:avoid; }
+          .receipt-line { color:#111 !important; page-break-inside:avoid; }
+          .receipt-check { border-color:#111 !important; }
+          .receipt-dots { border-bottom:1px dotted #777 !important; }
+          .receipt-price-line { color:#444 !important; page-break-inside:avoid; }
+          .receipt-buy-as, .receipt-line-total, .receipt-grand-total, .receipt-grand-note { color:#111 !important; }
+          .receipt-footer { border-top:1px solid #bbb !important; padding:14px 0 0 !important; }
+          @page { margin:0.5in; }
+        }
 
         .mp-loading { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:60vh; gap:10px; }
         .mp-warning { max-width:1100px; margin:0 auto 16px; background:rgba(255,47,120,0.15); border:1px solid var(--magenta); color:var(--text); padding:10px 14px; border-radius:10px; font-size:0.85rem; }
         .ai-test-row { display:flex; gap:8px; align-items:center; }
         .ai-test-btn { width:auto; flex-shrink:0; padding:10px 20px; }
-        .ai-generating-row { display:flex; align-items:center; justify-content:center; gap:8px; min-height:44px; margin: 6px 0 14px; color:var(--cyan); font-size:0.82rem; font-family:'Space Mono',monospace; background:rgba(45,226,230,0.08); border:1px solid rgba(45,226,230,0.22); border-radius:10px; }
-        .ai-status-pill { display:flex; align-items:center; gap:7px; color:var(--cyan); border:1px solid rgba(45,226,230,0.24); background:rgba(45,226,230,0.08); border-radius:999px; padding:7px 10px; font-size:0.72rem; font-family:'Space Mono',monospace; }
+        .ai-generating-row { display:flex; align-items:center; justify-content:center; gap:8px; min-height:44px; margin: 6px 0 14px; color:var(--cyan); font-size:0.82rem; font-family:"SFMono-Regular", Consolas, "Liberation Mono", monospace; background:rgba(45,226,230,0.08); border:1px solid rgba(45,226,230,0.22); border-radius:10px; }
+        .ai-status-pill { display:flex; align-items:center; gap:7px; color:var(--cyan); border:1px solid rgba(45,226,230,0.24); background:rgba(45,226,230,0.08); border-radius:999px; padding:7px 10px; font-size:0.72rem; font-family:"SFMono-Regular", Consolas, "Liberation Mono", monospace; }
         .settings-section { padding-top:4px; }
         .settings-section-title { display:flex; align-items:center; gap:6px; font-size:0.85rem; font-weight:600; margin-bottom:8px; color:var(--text); }
         .settings-desc { font-size:0.8rem; color:var(--text-dim); line-height:1.5; margin-bottom:14px; }
@@ -1370,7 +1777,7 @@ export default function App() {
         .settings-link-btn.danger:hover { color:var(--magenta-soft); }
         .settings-get-key-link { background:none; border:none; padding:0; font:inherit; font-size:0.78rem; color:var(--cyan); text-decoration:none; cursor:pointer; }
         .settings-get-key-link:hover { text-decoration:underline; }
-        .settings-status-msg { margin-top:8px; font-size:0.78rem; color:var(--text-dim); font-family:'Space Mono',monospace; }
+        .settings-status-msg { margin-top:8px; font-size:0.78rem; color:var(--text-dim); font-family:"SFMono-Regular", Consolas, "Liberation Mono", monospace; }
         .ask-panel { position:fixed; top:0; right:0; height:100vh; padding-top:env(safe-area-inset-top, 0px); width:100%; max-width:400px; background: linear-gradient(180deg, var(--night-mid), var(--night)); color:var(--text); box-shadow:-10px 0 30px rgba(0,0,0,0.5); z-index:70; display:flex; flex-direction:column; border-left: 1px solid var(--border-glow); }
         .ask-messages { flex:1; overflow-y:auto; padding:16px 20px; display:flex; flex-direction:column; gap:10px; }
         .ask-msg { max-width:85%; padding:10px 12px; border-radius:12px; font-size:0.85rem; line-height:1.5; white-space:pre-wrap; }
@@ -1426,6 +1833,16 @@ export default function App() {
             <button className="mp-today-btn" onClick={goToday}>
               Today
             </button>
+            {hasRangeMeals && (
+              <button
+                className="mp-clear-btn"
+                onClick={clearCurrentRangeMeals}
+                aria-label={viewMode === "week" ? "Clear week" : "Clear month"}
+              >
+                <Trash2 size={14} />
+                {viewMode === "week" ? "Clear week" : "Clear month"}
+              </button>
+            )}
             <button className="mp-nav-btn" onClick={goNext} aria-label="Next">
               <ChevronRight size={18} />
             </button>
@@ -1579,7 +1996,7 @@ export default function App() {
                     className="add-meal-btn"
                     onClick={() => {
                       setActiveDayKey(key);
-                      setModalTab("suggested");
+                      setModalTab("mine");
                       openSuggestionsPanel();
                     }}
                   >
@@ -1612,7 +2029,7 @@ export default function App() {
                     key={key}
                     onClick={() => {
                       setActiveDayKey(key);
-                      setModalTab("suggested");
+                      setModalTab("mine");
                       openSuggestionsPanel();
                     }}
                   >
@@ -1658,7 +2075,17 @@ export default function App() {
                 <X size={16} />
               </button>
             </div>
-            <div className="modal-day-title">{activeDayLabel}</div>
+            <div className="modal-day-row">
+              <div className="modal-day-title">{activeDayLabel}</div>
+              {activeDayMeals.length > 0 && (
+                <button
+                  className="mp-clear-btn mp-clear-btn-small"
+                  onClick={clearActiveDayMeals}
+                >
+                  <Trash2 size={13} /> Clear day
+                </button>
+              )}
+            </div>
 
             {activeDayMeals.length > 0 ? (
               <div className="modal-current-meals">
@@ -1747,22 +2174,28 @@ export default function App() {
 
             <div className="mp-tabs">
               <button
+                className={`mp-tab${modalTab === "mine" ? " active" : ""}`}
+                onClick={() => setModalTab("mine")}
+              >
+                My Meals
+              </button>
+              <button
                 className={`mp-tab${modalTab === "suggested" ? " active" : ""}`}
                 onClick={() => setModalTab("suggested")}
               >
                 Suggested
               </button>
               <button
-                className={`mp-tab${modalTab === "mine" ? " active" : ""}`}
-                onClick={() => setModalTab("mine")}
+                className={`mp-tab${modalTab === "favorites" ? " active" : ""}`}
+                onClick={() => setModalTab("favorites")}
               >
-                My meals
+                Favorites
               </button>
               <button
                 className={`mp-tab${modalTab === "new" ? " active" : ""}`}
                 onClick={() => setModalTab("new")}
               >
-                New meal
+                New Meal
               </button>
             </div>
 
@@ -1798,6 +2231,11 @@ export default function App() {
                     {aiSuggestError}
                   </div>
                 )}
+                {aiSuggestions.length > 0 &&
+                  renderMealListControls(
+                    filteredAiSuggestions.length,
+                    aiSuggestions,
+                  )}
                 {aiSuggestLoading && (
                   <div className="ai-generating-row">
                     <Loader2
@@ -1811,7 +2249,7 @@ export default function App() {
                 )}
                 {aiSuggestions.length > 0 && (
                   <div className="suggested-grid">
-                    {aiSuggestions.map((m) => (
+                    {filteredAiSuggestions.map((m) => (
                       <div
                         className="suggested-card"
                         role="button"
@@ -1828,10 +2266,15 @@ export default function App() {
                             e.stopPropagation();
                             saveSuggestionToMyMeals(m);
                           }}
-                          aria-label="Save to My Meals"
-                          title="Save to My Meals"
+                          aria-label={isMealFavorite(m) ? "Remove from Favorites" : "Add to Favorites"}
+                          title={isMealFavorite(m) ? "Remove from Favorites" : "Add to Favorites"}
+                          style={
+                            isMealFavorite(m)
+                              ? { color: "var(--sun-mid)", opacity: 1 }
+                              : undefined
+                          }
                         >
-                          <Star size={12} />
+                          <Star size={12} fill={isMealFavorite(m) ? "currentColor" : "none"} />
                         </button>
                         <div className="suggested-emoji">{m.emoji}</div>
                         <div className="suggested-name">{m.name}</div>
@@ -1849,6 +2292,13 @@ export default function App() {
                   </div>
                 )}
                 {!aiSuggestLoading &&
+                  aiSuggestions.length > 0 &&
+                  filteredAiSuggestions.length === 0 && (
+                    <div className="mp-empty">
+                      No suggested meals match the current search or filter.
+                    </div>
+                  )}
+                {!aiSuggestLoading &&
                   aiSuggestions.length === 0 &&
                   !aiSuggestError && (
                     <div className="mp-empty">
@@ -1860,13 +2310,102 @@ export default function App() {
             )}
 
             {modalTab === "mine" && (
-              <div className="suggested-grid">
-                {customMeals.map((m) => (
+              <>
+                <div className="settings-desc" style={{ marginBottom: 12 }}>
+                  Basic family meals that are built into the app. These do not
+                  use Gemini unless you ask for AI suggestions in the Suggested
+                  tab.
+                </div>
+                {renderMealListControls(
+                  filteredMyMealLibrary.length,
+                  myMealLibrary,
+                )}
+                <div className="suggested-grid">
+                  {filteredMyMealLibrary.map((m) => {
+                    const isCustomMeal = String(m.id || "").startsWith("custom-");
+
+                    return (
+                      <div
+                        className="suggested-card"
+                        role="button"
+                        tabIndex={0}
+                        key={mealDisplayKey(m, "mine")}
+                        onClick={() => setPreviewMeal(m)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") setPreviewMeal(m);
+                        }}
+                      >
+                        <button
+                          className="suggested-del"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFavoriteMeal(m);
+                          }}
+                          aria-label={
+                            isMealFavorite(m)
+                              ? "Remove from Favorites"
+                              : "Add to Favorites"
+                          }
+                          title={
+                            isMealFavorite(m)
+                              ? "Remove from Favorites"
+                              : "Add to Favorites"
+                          }
+                          style={
+                            isMealFavorite(m)
+                              ? { color: "var(--sun-mid)", opacity: 1 }
+                              : undefined
+                          }
+                        >
+                          <Star
+                            size={12}
+                            fill={isMealFavorite(m) ? "currentColor" : "none"}
+                          />
+                        </button>
+                        {isCustomMeal && (
+                          <button
+                            className="suggested-del"
+                            style={{ right: 32 }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteCustomMeal(m.id);
+                            }}
+                            aria-label="Delete custom meal"
+                            title="Delete custom meal"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        )}
+                        <div className="suggested-emoji">{m.emoji}</div>
+                        <div className="suggested-name">{m.name}</div>
+                        <div className="suggested-type">
+                          {
+                            (MEAL_TYPE_META[m.mealType] || MEAL_TYPE_META.dinner)
+                              .label
+                          }{" "}
+                          · Serves {m.baseServings || 4}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            {modalTab === "favorites" && (
+              <>
+                {favoriteMeals.length > 0 &&
+                  renderMealListControls(
+                    filteredFavoriteMeals.length,
+                    favoriteMeals,
+                  )}
+                <div className="suggested-grid">
+                {filteredFavoriteMeals.map((m) => (
                   <div
                     className="suggested-card"
                     role="button"
                     tabIndex={0}
-                    key={m.id}
+                    key={mealDisplayKey(m, "favorite")}
                     onClick={() => setPreviewMeal(m)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter") setPreviewMeal(m);
@@ -1876,11 +2415,13 @@ export default function App() {
                       className="suggested-del"
                       onClick={(e) => {
                         e.stopPropagation();
-                        deleteCustomMeal(m.id);
+                        toggleFavoriteMeal(m);
                       }}
-                      aria-label="Delete meal"
+                      aria-label="Remove from Favorites"
+                      title="Remove from Favorites"
+                      style={{ color: "var(--sun-mid)", opacity: 1 }}
                     >
-                      <Trash2 size={12} />
+                      <Star size={12} fill="currentColor" />
                     </button>
                     <div className="suggested-emoji">{m.emoji}</div>
                     <div className="suggested-name">{m.name}</div>
@@ -1893,14 +2434,21 @@ export default function App() {
                     </div>
                   </div>
                 ))}
-                {customMeals.length === 0 && (
+                {favoriteMeals.length > 0 && filteredFavoriteMeals.length === 0 && (
                   <div className="mp-empty">
-                    You haven't saved any meals yet — create one in the "New
-                    meal" tab.
+                    No favorites match the current search or filter.
+                  </div>
+                )}
+                {favoriteMeals.length === 0 && (
+                  <div className="mp-empty">
+                    Your favorite go-to meals will show up here. Tap the star on
+                    any meal to save it as a favorite.
                   </div>
                 )}
               </div>
+              </>
             )}
+
 
             {modalTab === "new" && (
               <div>
@@ -2084,12 +2632,17 @@ export default function App() {
                     : formatMonthLabel(monthAnchor)}
                 </div>
               </div>
-              <button
-                className="mp-close-btn"
-                onClick={() => setShowShoppingList(false)}
-              >
-                <X size={16} />
-              </button>
+              <div className="receipt-header-actions">
+                <button className="receipt-print-btn" onClick={printShoppingList}>
+                  Print / Save PDF
+                </button>
+                <button
+                  className="mp-close-btn"
+                  onClick={() => setShowShoppingList(false)}
+                >
+                  <X size={16} />
+                </button>
+              </div>
             </div>
             <div className="receipt-disclaimer">
               Prices are rough estimated U.S. averages — actual cost will vary
@@ -2177,11 +2730,6 @@ export default function App() {
               )}
             </div>
             <div className="receipt-footer">
-              <div className="barcode">
-                {BAR_WIDTHS.map((w, i) => (
-                  <span key={i} style={{ width: w + "px" }} />
-                ))}
-              </div>
               <div className="receipt-grand-total">
                 Estimated total: ${grandTotal.toFixed(2)}
               </div>
@@ -2312,6 +2860,21 @@ export default function App() {
                     }{" "}
                     · Serves {previewMeal.baseServings || 4}
                   </div>
+                  {previewMeal.sourceName && (
+                    <div className="recipe-source-note">
+                      Source-inspired: {previewMeal.sourceUrl ? (
+                        <a
+                          href={previewMeal.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          {previewMeal.sourceName}
+                        </a>
+                      ) : (
+                        previewMeal.sourceName
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
               <button
